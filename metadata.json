@@ -1,0 +1,6 @@
+{
+  "name": "Wii Controller",
+  "description": "Turns your Android device into a low-latency, immersive Wii motion controller for Dolphin emulator.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
