@@ -21,6 +21,9 @@ import com.example.data.database.ConnectionHistoryRepository
 import com.example.data.database.WiiControllerDatabase
 import com.example.network.AudioReceiverServer
 import com.example.network.DsuServer
+import com.example.network.BluetoothControllerManager
+import com.example.network.BluetoothRole
+import com.example.network.BtConnectionState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -55,6 +58,9 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
     private var dsuServer: DsuServer? = null
     private var audioServer: AudioReceiverServer? = null
 
+    // Bluetooth manager instances
+    val btManager = BluetoothControllerManager(application)
+
     // UI States
     val ipAddress = MutableStateFlow("127.0.0.1")
     val isDsuRunning = MutableStateFlow(false)
@@ -66,6 +72,28 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
     val audioBytesReceived = MutableStateFlow(0L)
     val isAudioStreaming = MutableStateFlow(false)
 
+    // Layout configuration variables (Customizable section)
+    val layoutPreset = MutableStateFlow("Classic Wii") // Options: "Classic Wii", "Horizontal Gamepad", "Big Buttons"
+    val buttonScale = MutableStateFlow(1.0f) // Scale multiplier: 0.8f, 1.0f, 1.2f, 1.5f
+    val themeColor = MutableStateFlow("Wii Blue") // Options: "Wii Blue", "Carbon Grey", "Nintendo Red", "Teal Fusion"
+
+    // Dynamic configurable Button Mapping Map
+    val buttonMappings = MutableStateFlow<Map<String, String>>(
+        mapOf(
+            "A" to "A",
+            "B" to "B",
+            "MINUS" to "MINUS",
+            "PLUS" to "PLUS",
+            "HOME" to "HOME",
+            "ONE" to "ONE",
+            "TWO" to "TWO",
+            "UP" to "UP",
+            "DOWN" to "DOWN",
+            "LEFT" to "LEFT",
+            "RIGHT" to "RIGHT"
+        )
+    )
+
     // Sensor state flows for visual overlay feedback
     private val _accelState = MutableStateFlow(Triple(0f, 0f, 10f))
     val accelState: StateFlow<Triple<Float, Float, Float>> = _accelState
@@ -75,10 +103,63 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
 
     private var telemetryJob: Job? = null
     private var shakeResetJob: Job? = null
+    private var senderShakeResetJob: Job? = null
     private var lastRumbleTime = 0L
 
     init {
         refreshLocalIp()
+
+        // Sync incoming bluetooth packets on receiver to DSU server
+        viewModelScope.launch {
+            btManager.receivedState.collect { packed ->
+                if (packed != null && btManager.role.value == BluetoothRole.RECEIVER) {
+                    // Update telemetry flows so local charts visual reflect tilting
+                    _accelState.value = Triple(packed.accelX, packed.accelY, packed.accelZ)
+                    _gyroState.value = Triple(packed.gyroX, packed.gyroY, packed.gyroZ)
+
+                    // Inject values to local DSU server
+                    dsuServer?.let { server ->
+                        server.accelX = packed.accelX
+                        server.accelY = packed.accelY
+                        server.accelZ = packed.accelZ
+                        server.gyroX = packed.gyroX
+                        server.gyroY = packed.gyroY
+                        server.gyroZ = packed.gyroZ
+
+                        server.buttonA = packed.isBtnPressed(BluetoothControllerManager.BTN_A)
+                        server.buttonB = packed.isBtnPressed(BluetoothControllerManager.BTN_B)
+                        server.buttonMinus = packed.isBtnPressed(BluetoothControllerManager.BTN_MINUS)
+                        server.buttonPlus = packed.isBtnPressed(BluetoothControllerManager.BTN_PLUS)
+                        server.buttonHome = packed.isBtnPressed(BluetoothControllerManager.BTN_HOME)
+                        server.button1 = packed.isBtnPressed(BluetoothControllerManager.BTN_1)
+                        server.button2 = packed.isBtnPressed(BluetoothControllerManager.BTN_2)
+                        server.buttonLeft = packed.isBtnPressed(BluetoothControllerManager.BTN_LEFT)
+                        server.buttonRight = packed.isBtnPressed(BluetoothControllerManager.BTN_RIGHT)
+                        server.buttonUp = packed.isBtnPressed(BluetoothControllerManager.BTN_UP)
+                        server.buttonDown = packed.isBtnPressed(BluetoothControllerManager.BTN_DOWN)
+                        server.buttonShake = packed.isBtnPressed(BluetoothControllerManager.BTN_SHAKE)
+
+                        server.stickX = packed.stickX.toInt()
+                        server.stickY = packed.stickY.toInt()
+                    }
+                }
+            }
+        }
+
+        // Trigger sensor activation/deactivation during connection transitions
+        viewModelScope.launch {
+            btManager.connectionState.collect { state ->
+                if (state == BtConnectionState.CONNECTED && btManager.role.value == BluetoothRole.SENDER) {
+                    startSensors()
+                    triggerVibrationNotification()
+                } else if (state == BtConnectionState.NONE) {
+                    // Reset sensors if DSU is not running
+                    if (!isDsuRunning.value) {
+                        stopSensors()
+                    }
+                }
+            }
+        }
     }
 
     private fun ConnectionHistoryRepository.allItemsFlow(): StateFlow<List<ConnectionHistoryEntity>> {
@@ -86,6 +167,28 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
+        )
+    }
+
+    fun updateButtonMapping(source: String, destination: String) {
+        val current = buttonMappings.value.toMutableMap()
+        current[source.uppercase()] = destination.uppercase()
+        buttonMappings.value = current
+    }
+
+    fun resetButtonMappings() {
+        buttonMappings.value = mapOf(
+            "A" to "A",
+            "B" to "B",
+            "MINUS" to "MINUS",
+            "PLUS" to "PLUS",
+            "HOME" to "HOME",
+            "ONE" to "ONE",
+            "TWO" to "TWO",
+            "UP" to "UP",
+            "DOWN" to "DOWN",
+            "LEFT" to "LEFT",
+            "RIGHT" to "RIGHT"
         )
     }
 
@@ -104,7 +207,11 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
             start()
         }
         isDsuRunning.value = true
-        startSensors()
+        
+        // Start physical sensors only if Receiver mode is not using peer data
+        if (btManager.role.value != BluetoothRole.RECEIVER) {
+            startSensors()
+        }
         startTelemetryMonitoring()
         triggerVibrationNotification()
     }
@@ -113,7 +220,9 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
         dsuServer?.stop()
         dsuServer = null
         isDsuRunning.value = false
-        stopSensors()
+        if (btManager.role.value != BluetoothRole.SENDER) {
+            stopSensors()
+        }
         stopTelemetryMonitoring()
         registeredClients.value = emptyList()
     }
@@ -180,17 +289,30 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
                 val y = event.values[1]
                 val z = event.values[2]
 
-                dsuServer?.accelX = x
-                dsuServer?.accelY = y
-                dsuServer?.accelZ = z
-
                 _accelState.value = Triple(x, y, z)
 
-                // Shake detection logic
+                // Shake detection logic (Wii Remote style shaking)
                 val magnitude = Math.sqrt((x * x + y * y + z * z).toDouble()) - 9.80665
-                if (magnitude > 6.0) { // Shake gesture
-                    dsuServer?.buttonShake = true
-                    triggerShakeResetTimer()
+                val isShake = magnitude > 6.0
+
+                if (btManager.role.value == BluetoothRole.SENDER && btManager.connectionState.value == BtConnectionState.CONNECTED) {
+                    btManager.senderAccelX = x
+                    btManager.senderAccelY = y
+                    btManager.senderAccelZ = z
+                    if (isShake) {
+                        btManager.updateSenderButton(BluetoothControllerManager.BTN_SHAKE, true)
+                        triggerSenderShakeReset()
+                    }
+                } else {
+                    dsuServer?.let { server ->
+                        server.accelX = x
+                        server.accelY = y
+                        server.accelZ = z
+                        if (isShake) {
+                            server.buttonShake = true
+                            triggerShakeResetTimer()
+                        }
+                    }
                 }
             }
             Sensor.TYPE_GYROSCOPE -> {
@@ -198,11 +320,19 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
                 val y = event.values[1]
                 val z = event.values[2]
 
-                dsuServer?.gyroX = x
-                dsuServer?.gyroY = y
-                dsuServer?.gyroZ = z
-
                 _gyroState.value = Triple(x, y, z)
+
+                if (btManager.role.value == BluetoothRole.SENDER && btManager.connectionState.value == BtConnectionState.CONNECTED) {
+                    btManager.senderGyroX = x
+                    btManager.senderGyroY = y
+                    btManager.senderGyroZ = z
+                } else {
+                    dsuServer?.let { server ->
+                        server.gyroX = x
+                        server.gyroY = y
+                        server.gyroZ = z
+                    }
+                }
             }
         }
     }
@@ -213,12 +343,19 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
         shakeResetJob?.cancel()
         shakeResetJob = viewModelScope.launch {
             try {
-                // Keep shake active for 150ms to guarantee Dolphin samples it
                 delay(150)
                 dsuServer?.buttonShake = false
-            } catch (e: Exception) {
-                // Ignore
-            }
+            } catch (e: Exception) {}
+        }
+    }
+
+    private fun triggerSenderShakeReset() {
+        senderShakeResetJob?.cancel()
+        senderShakeResetJob = viewModelScope.launch {
+            try {
+                delay(150)
+                btManager.updateSenderButton(BluetoothControllerManager.BTN_SHAKE, false)
+            } catch (e: Exception) {}
         }
     }
 
@@ -227,7 +364,6 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
         if (weak > 0 || strong > 0) {
             val maxStrength = Math.max(weak, strong)
             val amplitude = maxStrength.coerceIn(0, 255)
-            // Throttle to 25ms interval to match hardware limitations
             if (now - lastRumbleTime > 25) {
                 triggerVibration(35, amplitude)
                 lastRumbleTime = now
@@ -254,7 +390,6 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
     }
 
     private fun triggerVibrationNotification() {
-        // Wii controller double pulse sound/vibe on connected
         viewModelScope.launch {
             triggerVibration(60, 255)
             delay(100)
@@ -262,15 +397,40 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
-    // Input actions from UI Buttons overlay
+    // Input actions mapped dynamically from physical screen taps
     fun onButtonPressed(button: String, isPressed: Boolean) {
-        dsuServer?.let { server ->
-            // Trigger feedback vibration on press down
-            if (isPressed) {
-                triggerVibration(25, 120) // crisp touch feedback
-            }
+        val mappedButton = buttonMappings.value[button.uppercase()] ?: button.uppercase()
 
-            when (button.uppercase()) {
+        if (isPressed) {
+            triggerVibration(25, 120) // crisp touch feedback
+        }
+
+        // If we connected Bluetooth as SENDER, update the outgoing state
+        if (btManager.role.value == BluetoothRole.SENDER && btManager.connectionState.value == BtConnectionState.CONNECTED) {
+            val mask = when (mappedButton) {
+                "A" -> BluetoothControllerManager.BTN_A
+                "B" -> BluetoothControllerManager.BTN_B
+                "MINUS" -> BluetoothControllerManager.BTN_MINUS
+                "PLUS" -> BluetoothControllerManager.BTN_PLUS
+                "HOME" -> BluetoothControllerManager.BTN_HOME
+                "ONE" -> BluetoothControllerManager.BTN_1
+                "TWO" -> BluetoothControllerManager.BTN_2
+                "UP" -> BluetoothControllerManager.BTN_UP
+                "DOWN" -> BluetoothControllerManager.BTN_DOWN
+                "LEFT" -> BluetoothControllerManager.BTN_LEFT
+                "RIGHT" -> BluetoothControllerManager.BTN_RIGHT
+                "SHAKE" -> BluetoothControllerManager.BTN_SHAKE
+                else -> 0
+            }
+            if (mask != 0) {
+                btManager.updateSenderButton(mask, isPressed)
+            }
+            return
+        }
+
+        // Otherwise write onto the local active DSU instance
+        dsuServer?.let { server ->
+            when (mappedButton) {
                 "A" -> server.buttonA = isPressed
                 "B" -> server.buttonB = isPressed
                 "MINUS" -> server.buttonMinus = isPressed
@@ -288,14 +448,21 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun onStickMoved(x: Float, y: Float) {
+        val sX = (x * 127f).toInt().coerceIn(-128, 127).toByte()
+        val sY = (y * 127f).toInt().coerceIn(-128, 127).toByte()
+
+        if (btManager.role.value == BluetoothRole.SENDER && btManager.connectionState.value == BtConnectionState.CONNECTED) {
+            btManager.senderStickX = sX
+            btManager.senderStickY = sY
+            return
+        }
+
         dsuServer?.let { server ->
-            // Map floating coordinates -1.0..1.0 to digital stick byte boundary -128..127
-            server.stickX = (x * 127f).toInt().coerceIn(-128, 127)
-            server.stickY = (y * 127f).toInt().coerceIn(-128, 127)
+            server.stickX = sX.toInt()
+            server.stickY = sY.toInt()
         }
     }
 
-    // Profile History database operations
     fun saveConnectionToHistory(ip: String, port: Int, desc: String) {
         viewModelScope.launch {
             if (ip.isNotBlank()) {
@@ -326,7 +493,6 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
                     val address = addresses.nextElement()
                     if (!address.isLoopbackAddress && address is Inet4Address) {
                         val ip = address.hostAddress ?: ""
-                        // Prioritize local subnets
                         if (ip.startsWith("192.") || ip.startsWith("10.") || ip.startsWith("172.")) {
                             return ip
                         }
@@ -343,9 +509,9 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
         viewModelScope.launch(Dispatchers.IO) {
             val sampleRate = 11025
             val duration = when(soundId) {
-                1 -> 0.08 // click
-                2 -> 0.4  // wii chime pulse
-                else -> 0.35 // laser
+                1 -> 0.08
+                2 -> 0.4
+                else -> 0.35
             }
             val numSamples = (duration * sampleRate).toInt()
             val samples = ShortArray(numSamples)
@@ -353,16 +519,16 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
             for (i in 0 until numSamples) {
                 val t = i.toDouble() / sampleRate
                 when(soundId) {
-                    1 -> { // Click: fading high pitch
+                    1 -> {
                         val envelope = Math.max(0.0, 1.0 - t / duration)
                         samples[i] = (envelope * 24000 * Math.sin(2.0 * Math.PI * 880.0 * t)).toInt().toShort()
                     }
-                    2 -> { // Dual tone beep
+                    2 -> {
                         val envelope = Math.max(0.0, 1.0 - t / duration)
                         val value = 0.5 * Math.sin(2.0 * Math.PI * 880.0 * t) + 0.5 * Math.sin(2.0 * Math.PI * 1100.0 * t)
                         samples[i] = (envelope * 22000 * value).toInt().toShort()
                     }
-                    else -> { // Retro slide
+                    else -> {
                         val freq = 1200.0 - (t / duration) * 800.0
                         val envelope = Math.max(0.0, 1.0 - t / duration)
                         samples[i] = (envelope * 20000 * Math.sin(2.0 * Math.PI * freq * t)).toInt().toShort()
@@ -402,6 +568,7 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
     override fun onCleared() {
         super.onCleared()
         stopDsuServer()
+        btManager.stopAll()
         audioServer?.stop()
         audioServer = null
     }
