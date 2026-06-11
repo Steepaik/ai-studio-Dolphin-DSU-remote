@@ -156,49 +156,338 @@ fun ControllerTab(viewModel: WiiControllerViewModel) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            // Header Info Bar
+            // Nintendo Wii Role & Sync Hub Card
             Card(
-                colors = CardDefaults.cardColors(containerColor = CardDark.copy(alpha = 0.8f)),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
+                colors = CardDefaults.cardColors(containerColor = CardDark.copy(alpha = 0.9f)),
+                shape = RoundedCornerShape(24.dp),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp, 
+                    if (btState == BtConnectionState.CONNECTED) ActiveGreen.copy(alpha = 0.4f) else ElectricBlue.copy(alpha = 0.2f)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .shadow(12.dp, RoundedCornerShape(24.dp))
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Column {
-                        Text(
-                            text = "Wii MotionRemote",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (btRole == BluetoothRole.SENDER && btState == BtConnectionState.CONNECTED) {
-                                "Classic Bluetooth Transmitting"
-                            } else if (isDsu) {
-                                "DSU UDP Link Broadcasting"
-                            } else {
-                                "Ready to pair or sync"
-                            },
-                            fontSize = 12.sp,
-                            color = SoftGrey
-                        )
-                    }
-                    Button(
-                        onClick = { viewModel.calibrateMotionPlus() },
-                        colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.testTag("quick_recalibrate_button")
+                    // Header Row with glowing icon and connection state indicator
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Calibrate", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (btState == BtConnectionState.CONNECTED || isDsu) ActiveGreen 
+                                        else if (btState == BtConnectionState.CONNECTING) ElectricBlue 
+                                        else SoftGrey
+                                    )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Wii Console Transmit System",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                        
+                        // Active Badge
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (btRole == BluetoothRole.RECEIVER) ActiveGreen.copy(alpha = 0.15f)
+                                    else if (btRole == BluetoothRole.SENDER) ElectricBlue.copy(alpha = 0.15f)
+                                    else Color.DarkGray.copy(alpha = 0.5f),
+                                    RoundedCornerShape(8.dp)
+                                )
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = when (btRole) {
+                                    BluetoothRole.RECEIVER -> "CONSOLE HOST"
+                                    BluetoothRole.SENDER -> "WII REMOTE"
+                                    else -> "STANDALONE"
+                                },
+                                color = when (btRole) {
+                                    BluetoothRole.RECEIVER -> ActiveGreen
+                                    BluetoothRole.SENDER -> ElectricBlue
+                                    else -> SoftGrey
+                                },
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+
+                    // Segmented Selector Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(ConsoleDark, RoundedCornerShape(12.dp))
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Button(
+                            onClick = { 
+                                viewModel.btManager.startReceiverServer() 
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (btRole == BluetoothRole.RECEIVER) CardDark else Color.Transparent,
+                                contentColor = if (btRole == BluetoothRole.RECEIVER) ActiveGreen else SoftGrey
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(vertical = 10.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Console Host", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = { 
+                                viewModel.btManager.startSenderMode() 
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (btRole == BluetoothRole.SENDER) CardDark else Color.Transparent,
+                                contentColor = if (btRole == BluetoothRole.SENDER) ElectricBlue else SoftGrey
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(vertical = 10.dp)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("WiiMote Client", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    // Mode Details Panel
+                    when (btRole) {
+                        BluetoothRole.RECEIVER -> {
+                            // Wii Console Hub (Receiver) Details Panel
+                            val isRun by viewModel.isDsuRunning.collectAsStateWithLifecycle()
+                            val ipAddr by viewModel.ipAddress.collectAsStateWithLifecycle()
+                            val clients by viewModel.btClientsList.collectAsStateWithLifecycle()
+                            val clipboard = LocalClipboardManager.current
+                            val syncUrl = "wiibt://02:00:00:00:00:00/1f8bd4b2-0382-4aa8-a53b-fde5bc63ee28"
+                            
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text("DSU Broadcast IP Endpoint", fontSize = 11.sp, color = SoftGrey)
+                                        Text("$ipAddr:26760", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ActiveGreen)
+                                    }
+                                    
+                                    Button(
+                                        onClick = {
+                                            if (isRun) viewModel.stopDsuServer() else viewModel.startDsuServer(26760)
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isRun) ErrorCrimson else ElectricBlue
+                                        ),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(if (isRun) "STOP" else "START DSU", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(ConsoleDark, RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            clipboard.setText(AnnotatedString(syncUrl))
+                                            Toast.makeText(context, "Copied connection metadata URL!", Toast.LENGTH_SHORT).show()
+                                        }
+                                        .padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Share, contentDescription = null, tint = ElectricBlue, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Sync URL: $syncUrl",
+                                        fontSize = 11.sp,
+                                        color = ElectricBlue,
+                                        maxLines = 1
+                                    )
+                                }
+
+                                Text("Multiplayer Gamepad Slots:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(ActiveGreen))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Player P1: LOCAL SENSOR INPUT", fontSize = 11.sp, color = ActiveGreen)
+                                    }
+
+                                    for (slot in 2..4) {
+                                        val cConnected = clients.find { it.contains("Slot $slot") }
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(6.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (cConnected != null) ActiveGreen else Color.DarkGray)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = cConnected ?: "Player P$slot: [Awaiting Bluetooth sync controller client]",
+                                                fontSize = 11.sp,
+                                                color = if (cConnected != null) ActiveGreen else SoftGrey
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        BluetoothRole.SENDER -> {
+                            // Wii Remote Client (Sender) Details Panel
+                            val devList = viewModel.btManager.pairedDevices.collectAsStateWithLifecycle().value
+                            val isRecon by viewModel.isReconnecting.collectAsStateWithLifecycle()
+                            val reconAttempt by viewModel.reconnectAttempt.collectAsStateWithLifecycle()
+                            
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                if (isRecon) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(ErrorCrimson.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                                            .padding(8.dp)
+                                    ) {
+                                        Text(
+                                            text = "Reconnecting to Host... (Attempt $reconAttempt/10)",
+                                            fontSize = 11.sp,
+                                            color = ErrorCrimson,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                if (btState == BtConnectionState.CONNECTED) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(ConsoleDark, RoundedCornerShape(8.dp))
+                                            .padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text("Active RFCOMM Sync Status", fontSize = 10.sp, color = SoftGrey)
+                                            Text("Connected to Host Hub", fontSize = 12.sp, color = ActiveGreen, fontWeight = FontWeight.Bold)
+                                        }
+                                        Button(
+                                            onClick = { viewModel.btManager.stopAll() },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
+                                            shape = RoundedCornerShape(6.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("DISCONNECT", fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                } else {
+                                    Text("Select a Console Host to sync sensors with:", fontSize = 11.sp, color = SoftGrey)
+                                    if (devList.isEmpty()) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(ConsoleDark, RoundedCornerShape(8.dp))
+                                                .padding(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Default.Warning, contentDescription = null, tint = ErrorCrimson, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("No bonded devices. Pair first in Android bluetooth settings.", fontSize = 10.sp, color = ErrorCrimson)
+                                        }
+                                    } else {
+                                        Column(
+                                            modifier = Modifier.heightIn(max = 120.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            devList.forEach { dev ->
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .background(ConsoleDark, RoundedCornerShape(8.dp))
+                                                        .clickable { viewModel.btManager.connectAsSender(dev) }
+                                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Icon(Icons.Default.Person, contentDescription = null, tint = SoftGrey, modifier = Modifier.size(14.dp))
+                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Text(dev.name ?: "Unnamed Device", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                                    }
+                                                    Text("SYNC LINK", fontSize = 10.sp, color = ElectricBlue, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        else -> {
+                            // Standalone / Offline Controller Mode
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                            ) {
+                                Text("No Active Multiplayer Link Synced", fontSize = 12.sp, color = SoftGrey)
+                                Text("Choose Console Host or WiiMote Client mode above to wire several gamepads.", fontSize = 11.sp, color = SoftGrey.copy(alpha = 0.7f), textAlign = TextAlign.Center)
+                            }
+                        }
+                    }
+                    
+                    // Force alignment button and calibrate option at bottom
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = { viewModel.btManager.stopAll() },
+                            colors = ButtonDefaults.textButtonColors(contentColor = SoftGrey)
+                        ) {
+                            Text("Reset Wireless Sockets", fontSize = 11.sp)
+                        }
+
+                        Button(
+                            onClick = { viewModel.calibrateMotionPlus() },
+                            colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Calibrate Gyro", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
