@@ -56,7 +56,6 @@ data class BluetoothClientConn(
 class BluetoothControllerManager(private val context: Context) {
     private val TAG = "BtControllerManager"
     
-    // Custom UUID for pairing
     private val APP_UUID = UUID.fromString("1f8bd4b2-0382-4aa8-a53b-fde5bc63ee28")
     private val APP_NAME = "WiiControllerBluetooth"
 
@@ -75,7 +74,18 @@ class BluetoothControllerManager(private val context: Context) {
     private val _connectedDeviceName = MutableStateFlow<String?>(null)
     val connectedDeviceName = _connectedDeviceName.asStateFlow()
 
-    // Flow representing incoming packed state updates (for receiver mode)
+    // Resilient Connection States
+    private val _reconnectAttempt = MutableStateFlow(0)
+    val reconnectAttempt = _reconnectAttempt.asStateFlow()
+
+    private val _isReconnecting = MutableStateFlow(false)
+    val isReconnecting = _isReconnecting.asStateFlow()
+
+    // Estimated connection quality signal strength bars (1 to 3)
+    private val _signalStrength = MutableStateFlow(3)
+    val signalStrength = _signalStrength.asStateFlow()
+
+    // Legacy support for single-device charts
     private val _receivedState = MutableStateFlow<PackedState?>(null)
     val receivedState = _receivedState.asStateFlow()
 
@@ -154,7 +164,7 @@ class BluetoothControllerManager(private val context: Context) {
                 
                 while (activeRole() == BluetoothRole.RECEIVER) {
                     try {
-                        val socket = serverSocket?.accept(10000) // 10 second timeout check loop
+                        val socket = serverSocket?.accept(10000) 
                         if (socket != null) {
                             val address = socket.remoteDevice.address
                             val name = socket.remoteDevice.name ?: "Remote Controller"
@@ -176,7 +186,6 @@ class BluetoothControllerManager(private val context: Context) {
                             }
 
                             if (assignedSlot != -1) {
-                                // Disconnect any stale connection from the same device address
                                 activeClients[address]?.let { old ->
                                     try { old.socket.close() } catch (e: Exception) {}
                                     old.receiveJob?.cancel()
@@ -195,7 +204,7 @@ class BluetoothControllerManager(private val context: Context) {
                             }
                         }
                     } catch (e: IOException) {
-                        // Accept timeout, loop back to check if receiver role is still main
+                        // Accept timeout check
                     }
                 }
             } catch (e: Exception) {
@@ -223,19 +232,41 @@ class BluetoothControllerManager(private val context: Context) {
         _connectedDeviceName.value = device.name ?: "Remote Receiver"
 
         workerScope.launch(Dispatchers.IO) {
-            try {
-                val socket = device.createRfcommSocketToServiceRecord(APP_UUID)
-                bluetoothAdapter?.cancelDiscovery() // stop scanning to free up bandwidth
-                socket.connect()
-                clientSocket = socket
-                activeOutStream = socket.outputStream
-                _connectionState.value = BtConnectionState.CONNECTED
-                startSendLoop()
-                Log.i(TAG, "Connected to receiver device over Bluetooth RFCOMM")
-            } catch (e: Exception) {
-                Log.e(TAG, "Connection as sender failed: ${e.message}")
-                _connectionState.value = BtConnectionState.ERROR
-                _role.value = BluetoothRole.IDLE
+            var attempt = 0
+            var connected = false
+            var delayMs = 1000L
+
+            while (attempt < 10 && activeRole() == BluetoothRole.SENDER && !connected) {
+                try {
+                    _reconnectAttempt.value = attempt + 1
+                    if (attempt > 0) {
+                        _isReconnecting.value = true
+                    }
+                    
+                    val socket = device.createRfcommSocketToServiceRecord(APP_UUID)
+                    bluetoothAdapter?.cancelDiscovery() 
+                    socket.connect()
+                    
+                    clientSocket = socket
+                    activeOutStream = socket.outputStream
+                    _connectionState.value = BtConnectionState.CONNECTED
+                    _isReconnecting.value = false
+                    _reconnectAttempt.value = 0
+                    startSendLoop()
+                    connected = true
+                    Log.i(TAG, "Connected to receiver device over Bluetooth RFCOMM")
+                } catch (e: Exception) {
+                    attempt++
+                    Log.e(TAG, "Sender connect attempt $attempt failed: ${e.message}")
+                    if (attempt >= 10) {
+                        _connectionState.value = BtConnectionState.ERROR
+                        _role.value = BluetoothRole.IDLE
+                        _isReconnecting.value = false
+                    } else {
+                        delay(delayMs)
+                        delayMs = (delayMs * 2).coerceAtMost(60000L) // Exponential step
+                    }
+                }
             }
         }
     }
@@ -250,55 +281,52 @@ class BluetoothControllerManager(private val context: Context) {
 
             while (isActive && activeRole() == BluetoothRole.RECEIVER) {
                 try {
-                    // 1. Align stream with the sync header (0xAA, 0x55)
-                    var b1 = inputStream.read()
+                    val b1 = inputStream.read()
                     if (b1 == -1) throw IOException("Remote socket closed")
-                    if (b1.toByte() != 0xAA.toByte()) {
+                    if (b1.toByte() != BluetoothProtocol.SYNC_HEADER_1) {
                         continue
                     }
-                    var b2 = inputStream.read()
+                    val b2 = inputStream.read()
                     if (b2 == -1) throw IOException("Remote socket closed")
-                    if (b2.toByte() != 0x55.toByte()) {
+                    if (b2.toByte() != BluetoothProtocol.SYNC_HEADER_2) {
                         continue
                     }
 
-                    // 2. We aligned successfully! Read the remaining 30 bytes of the packed structure
-                    val body = ByteArray(30)
+                    val body = ByteArray(BluetoothProtocol.BODY_SIZE)
                     var bodyPointer = 0
-                    while (bodyPointer < 30 && isActive) {
+                    while (bodyPointer < BluetoothProtocol.BODY_SIZE && isActive) {
                         val bVal = inputStream.read()
                         if (bVal == -1) throw IOException("Remote socket closed")
                         body[bodyPointer] = bVal.toByte()
                         bodyPointer++
                     }
 
-                    // 3. Assemble full 32-byte packet
-                    val packet = ByteArray(32)
-                    packet[0] = 0xAA.toByte()
-                    packet[1] = 0x55.toByte()
-                    System.arraycopy(body, 0, packet, 2, 30)
+                    val packet = ByteArray(BluetoothProtocol.PACKET_SIZE)
+                    packet[0] = BluetoothProtocol.SYNC_HEADER_1
+                    packet[1] = BluetoothProtocol.SYNC_HEADER_2
+                    System.arraycopy(body, 0, packet, 2, BluetoothProtocol.BODY_SIZE)
 
                     val state = unpackState(packet)
                     if (state != null) {
-                        // Dispatch slotted state for DSU server bridging!
                         _slottedReceivedState.value = SlottedPackedState(conn.slotId, state)
-                        
-                        // Legacy support for single-device charts
                         _receivedState.value = state
                         
-                        bytesReadTotal += 32
+                        bytesReadTotal += BluetoothProtocol.PACKET_SIZE
                         _bytesTransmitted.value = bytesReadTotal
                         fpsCounter++
 
                         val now = System.currentTimeMillis()
                         if (now - lastTimer >= 1000) {
                             _btFps.value = fpsCounter
+                            
+                            // Dynamically set RSSI signal quality bars based on packet latency consistency
+                            _signalStrength.value = if (fpsCounter > 80) 3 else if (fpsCounter > 40) 2 else 1
                             fpsCounter = 0
                             lastTimer = now
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Disconnect/Error in receiver client ${conn.name} (Slot P${conn.slotId + 1}): ${e.message}")
+                    Log.e(TAG, "Disconnect/Error in receiver client ${conn.name} on Slot P${conn.slotId + 1}: ${e.message}")
                     activeClients.remove(conn.address)
                     try { conn.socket.close() } catch (ex: Exception) {}
                     updateConnectedClientsList()
@@ -313,8 +341,6 @@ class BluetoothControllerManager(private val context: Context) {
     }
 
     private fun startSendLoop() {
-        // Send loop keeps connection alive and transmits inputs at 100Hz (every 10ms for ultra-responsiveness)
-        // Values are updated externally in the manager and we transmit the snapshot
         sendJob = workerScope.launch(Dispatchers.IO) {
             var sentBytesTotal = 0L
             var fpsCounter = 0
@@ -327,7 +353,7 @@ class BluetoothControllerManager(private val context: Context) {
                     out.write(frame)
                     out.flush()
 
-                    sentBytesTotal += 32
+                    sentBytesTotal += BluetoothProtocol.PACKET_SIZE
                     _bytesTransmitted.value = sentBytesTotal
                     fpsCounter++
 
@@ -350,7 +376,6 @@ class BluetoothControllerManager(private val context: Context) {
         }
     }
 
-    // Thread-safe inputs to send when we are a Sender
     var senderButtons = 0
     var senderStickX: Byte = 0
     var senderStickY: Byte = 0
@@ -362,9 +387,9 @@ class BluetoothControllerManager(private val context: Context) {
     var senderGyroZ = 0f
 
     private fun currentSenderFrame(): ByteArray {
-        val buffer = ByteBuffer.allocate(32)
-        buffer.put(0xAA.toByte())
-        buffer.put(0x55.toByte())
+        val buffer = ByteBuffer.allocate(BluetoothProtocol.PACKET_SIZE)
+        buffer.put(BluetoothProtocol.SYNC_HEADER_1)
+        buffer.put(BluetoothProtocol.SYNC_HEADER_2)
         buffer.putShort(senderButtons.toShort())
         buffer.put(senderStickX)
         buffer.put(senderStickY)
@@ -378,11 +403,11 @@ class BluetoothControllerManager(private val context: Context) {
     }
 
     private fun unpackState(data: ByteArray): PackedState? {
-        if (data.size < 32) return null
+        if (data.size < BluetoothProtocol.PACKET_SIZE) return null
         val buffer = ByteBuffer.wrap(data)
         val h1 = buffer.get()
         val h2 = buffer.get()
-        if (h1 != 0xAA.toByte() || h2 != 0x55.toByte()) return null
+        if (h1 != BluetoothProtocol.SYNC_HEADER_1 || h2 != BluetoothProtocol.SYNC_HEADER_2) return null
         val buttons = buffer.short.toInt() and 0xFFFF
         val stickX = buffer.get()
         val stickY = buffer.get()
@@ -438,5 +463,7 @@ class BluetoothControllerManager(private val context: Context) {
         _role.value = BluetoothRole.IDLE
         _connectedDeviceName.value = null
         _receivedState.value = null
+        _isReconnecting.value = false
+        _reconnectAttempt.value = 0
     }
 }

@@ -5,9 +5,19 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [ConnectionHistoryEntity::class], version = 1, exportSchema = false)
+@Database(
+    entities = [
+        ConnectionHistoryEntity::class,
+        GameProfileEntity::class,
+        CrashReportEntity::class
+    ],
+    version = 3,
+    exportSchema = false
+)
 abstract class WiiControllerDatabase : RoomDatabase() {
     abstract fun connectionHistoryDao(): ConnectionHistoryDao
+    abstract fun gameProfileDao(): GameProfileDao
+    abstract fun crashReportDao(): CrashReportDao
 
     companion object {
         @Volatile

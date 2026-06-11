@@ -1,28 +1,22 @@
 package com.example.ui
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,1086 +25,279 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.data.database.ConnectionHistoryEntity
-import com.example.network.BluetoothControllerManager
+import com.example.data.database.CrashReportEntity
+import com.example.data.database.GameProfileEntity
 import com.example.network.BluetoothRole
 import com.example.network.BtConnectionState
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
-// Wii Inspired Colors
-val WiiBlue = Color(0xFF00AAFF)
-val WiiGrey = Color(0xFFEBEBEB)
-val SlateBackground = Color(0xFF13151A)
-val LightSlate = Color(0xFF20232A)
-val CrimsonRed = Color(0xFFFF3366)
+// Console Theme Color Palette
+val ConsoleDark = Color(0xFF0B111E)
+val CardDark = Color(0xFF16213E)
+val ElectricBlue = Color(0xFF00D2FF)
+val ActiveGreen = Color(0xFF00FF88)
+val SoftGrey = Color(0xFFB0C4DE)
+val ErrorCrimson = Color(0xFFFF4D4D)
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WiiControllerScreen(viewModel: WiiControllerViewModel) {
-    val isDsuRunning by viewModel.isDsuRunning.collectAsStateWithLifecycle()
-    val isAudioRunning by viewModel.isAudioRunning.collectAsStateWithLifecycle()
-    val ipAddr by viewModel.ipAddress.collectAsStateWithLifecycle()
-    val clients by viewModel.registeredClients.collectAsStateWithLifecycle()
-    val sentCount by viewModel.totalPacketsSent.collectAsStateWithLifecycle()
-    val recvCount by viewModel.totalPacketsReceived.collectAsStateWithLifecycle()
-    val fpsVal by viewModel.dsuFps.collectAsStateWithLifecycle()
-    val audioBytes by viewModel.audioBytesReceived.collectAsStateWithLifecycle()
-    val isAudioStreaming by viewModel.isAudioStreaming.collectAsStateWithLifecycle()
-
-    val accel by viewModel.accelState.collectAsStateWithLifecycle()
-    val gyro by viewModel.gyroState.collectAsStateWithLifecycle()
-    val connections by viewModel.connectionHistory.collectAsStateWithLifecycle()
-
-    // Bluetooth States
-    val btRole by viewModel.btManager.role.collectAsStateWithLifecycle()
-    val btState by viewModel.btManager.connectionState.collectAsStateWithLifecycle()
-    val btDeviceName by viewModel.btManager.connectedDeviceName.collectAsStateWithLifecycle()
-
-    // Customizable Styles
-    val selectedTheme by viewModel.themeColor.collectAsStateWithLifecycle()
-
-    val currentAccentColor = when(selectedTheme) {
-        "Carbon Grey" -> Color(0xFF5A626F)
-        "Nintendo Red" -> Color(0xFFE60012)
-        "Teal Fusion" -> Color(0xFF008080)
-        else -> WiiBlue
-    }
-
-    var activeTab by remember { mutableStateOf(0) } // 0=Gamepad, 1=DSU Server, 2=Bluetooth Sync, 3=Customizer, 4=Guides
+    val context = LocalContext.current
+    var activeTab by remember { mutableStateOf(0) } // 0 = Controller, 1 = Profiles, 2 = Settings
 
     Scaffold(
         bottomBar = {
             NavigationBar(
-                containerColor = LightSlate,
-                contentColor = Color.White,
-                modifier = Modifier.navigationBarsPadding(),
-                tonalElevation = 8.dp
+                containerColor = CardDark,
+                tonalElevation = 12.dp
             ) {
                 NavigationBarItem(
                     selected = activeTab == 0,
                     onClick = { activeTab = 0 },
-                    icon = { Icon(Icons.Default.PlayArrow, contentDescription = "Gamepad") },
-                    label = { Text("Gamepad", fontSize = 10.sp) },
+                    icon = { Icon(Icons.Default.PlayArrow, contentDescription = "Wii Remote Gamepad") },
+                    label = { Text("Gamepad", fontWeight = FontWeight.Bold) },
                     colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = currentAccentColor,
-                        selectedTextColor = currentAccentColor,
-                        indicatorColor = LightSlate.copy(alpha = 0.5f),
-                        unselectedIconColor = Color.LightGray,
-                        unselectedTextColor = Color.LightGray
-                    )
+                        selectedIconColor = ElectricBlue,
+                        selectedTextColor = ElectricBlue,
+                        indicatorColor = ConsoleDark,
+                        unselectedIconColor = SoftGrey,
+                        unselectedTextColor = SoftGrey
+                    ),
+                    modifier = Modifier.testTag("nav_tab_controller")
                 )
                 NavigationBarItem(
                     selected = activeTab == 1,
                     onClick = { activeTab = 1 },
-                    icon = { Icon(Icons.Default.Settings, contentDescription = "Server Settings") },
-                    label = { Text("Server Hub", fontSize = 10.sp) },
+                    icon = { Icon(Icons.Default.List, contentDescription = "Game Profiles") },
+                    label = { Text("Profiles", fontWeight = FontWeight.Bold) },
                     colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = currentAccentColor,
-                        selectedTextColor = currentAccentColor,
-                        indicatorColor = LightSlate.copy(alpha = 0.5f),
-                        unselectedIconColor = Color.LightGray,
-                        unselectedTextColor = Color.LightGray
-                    )
+                        selectedIconColor = ElectricBlue,
+                        selectedTextColor = ElectricBlue,
+                        indicatorColor = ConsoleDark,
+                        unselectedIconColor = SoftGrey,
+                        unselectedTextColor = SoftGrey
+                    ),
+                    modifier = Modifier.testTag("nav_tab_profiles")
                 )
                 NavigationBarItem(
                     selected = activeTab == 2,
                     onClick = { activeTab = 2 },
-                    icon = { Icon(Icons.Default.Share, contentDescription = "Bluetooth Sync") },
-                    label = { Text("BT Sync", fontSize = 10.sp) },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = "Wii Connection Settings") },
+                    label = { Text("Settings", fontWeight = FontWeight.Bold) },
                     colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = currentAccentColor,
-                        selectedTextColor = currentAccentColor,
-                        indicatorColor = LightSlate.copy(alpha = 0.5f),
-                        unselectedIconColor = Color.LightGray,
-                        unselectedTextColor = Color.LightGray
-                    )
-                )
-                NavigationBarItem(
-                    selected = activeTab == 3,
-                    onClick = { activeTab = 3 },
-                    icon = { Icon(Icons.Default.Create, contentDescription = "Layout Customizer") },
-                    label = { Text("Customize", fontSize = 10.sp) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = currentAccentColor,
-                        selectedTextColor = currentAccentColor,
-                        indicatorColor = LightSlate.copy(alpha = 0.5f),
-                        unselectedIconColor = Color.LightGray,
-                        unselectedTextColor = Color.LightGray
-                    )
-                )
-                NavigationBarItem(
-                    selected = activeTab == 4,
-                    onClick = { activeTab = 4 },
-                    icon = { Icon(Icons.Default.Info, contentDescription = "Manual Guide") },
-                    label = { Text("Guides", fontSize = 10.sp) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = currentAccentColor,
-                        selectedTextColor = currentAccentColor,
-                        indicatorColor = LightSlate.copy(alpha = 0.5f),
-                        unselectedIconColor = Color.LightGray,
-                        unselectedTextColor = Color.LightGray
-                    )
+                        selectedIconColor = ElectricBlue,
+                        selectedTextColor = ElectricBlue,
+                        indicatorColor = ConsoleDark,
+                        unselectedIconColor = SoftGrey,
+                        unselectedTextColor = SoftGrey
+                    ),
+                    modifier = Modifier.testTag("nav_tab_settings")
                 )
             }
         },
-        containerColor = SlateBackground
+        containerColor = ConsoleDark
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(SlateBackground)
-        ) {
-            // Header Stats bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(LightSlate)
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
-                    .statusBarsPadding(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "Wii Motion Link",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        fontFamily = FontFamily.SansSerif
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(ConsoleDark, Color(0xFF020617))
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = if (btRole == BluetoothRole.SENDER && btState == BtConnectionState.CONNECTED) "BT Transmitter Mode"
-                            else if (btRole == BluetoothRole.RECEIVER && btState == BtConnectionState.CONNECTED) "BT Receiver Bridge"
-                            else "IP: $ipAddr",
-                            fontSize = 11.sp,
-                            color = currentAccentColor,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (btDeviceName != null) {
-                            Text(
-                                text = " ➔ $btDeviceName",
-                                fontSize = 11.sp,
-                                color = Color.LightGray
-                            )
-                        }
-                    }
-                }
-
-                // Integration state display indicators
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(if (isDsuRunning) Color.Green else Color.Gray)
-                        )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text("DSU", fontSize = 9.sp, color = Color.LightGray)
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    when (btState) {
-                                        BtConnectionState.CONNECTED -> Color.Green
-                                        BtConnectionState.CONNECTING -> Color.Yellow
-                                        BtConnectionState.LISTENING -> WiiBlue
-                                        else -> Color.Gray
-                                    }
-                                )
-                        )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text("BT", fontSize = 9.sp, color = Color.LightGray)
-                    }
-                }
-            }
-
-            // Central tab renderer
-            AnimatedContent(
-                targetState = activeTab,
-                transitionSpec = {
-                    fadeIn() togetherWith fadeOut()
-                },
-                label = "MainTabs",
-                modifier = Modifier.fillMaxSize()
-            ) { tabIndex ->
-                when (tabIndex) {
-                    0 -> ControllerTab(viewModel, accel, gyro, isDsuRunning, btRole, btState, currentAccentColor)
-                    1 -> ServerHubTab(viewModel, isDsuRunning, isAudioRunning, sentCount, recvCount, fpsVal, audioBytes, isAudioStreaming, connections, ipAddr, currentAccentColor)
-                    2 -> BluetoothSyncTab(viewModel, currentAccentColor)
-                    3 -> CustomizerTab(viewModel, currentAccentColor)
-                    4 -> InstructionTab(currentAccentColor)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ControllerTab(
-    viewModel: WiiControllerViewModel,
-    accel: Triple<Float, Float, Float>,
-    gyro: Triple<Float, Float, Float>,
-    isDsuRunning: Boolean,
-    btRole: BluetoothRole,
-    btState: BtConnectionState,
-    themeColor: Color
-) {
-    val inputIsActive = isDsuRunning || (btRole == BluetoothRole.SENDER && btState == BtConnectionState.CONNECTED)
-
-    if (!inputIsActive) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(
-                Icons.Default.PlayArrow,
-                contentDescription = null,
-                tint = Color.Gray,
-                modifier = Modifier.size(80.dp)
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                "Controller Input Offline",
-                color = Color.White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                "To play games, turn on your local 'DSU input Server' under Server Hub, or connect to an android receiver via 'Bluetooth Sync'!",
-                color = Color.Gray,
-                fontSize = 14.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            Button(
-                onClick = { viewModel.startDsuServer() },
-                colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                modifier = Modifier.testTag("activate_dsu_standalone_btn")
-            ) {
-                Text("Start Standalone DSU", color = Color.White)
-            }
-        }
-    } else {
-        val preset by viewModel.layoutPreset.collectAsStateWithLifecycle()
-        val scale by viewModel.buttonScale.collectAsStateWithLifecycle()
-        val selectedTheme by viewModel.themeColor.collectAsStateWithLifecycle()
-
-        val (shellBg, buttonBg, isDarkTheme) = when (selectedTheme) {
-            "Carbon Grey" -> Triple(Color(0xFF2E3138), Color(0xFF1E2024), true)
-            "Nintendo Red" -> Triple(Color(0xFFFFEEF0), Color(0xFFE60012).copy(alpha = 0.15f), false)
-            "Teal Fusion" -> Triple(Color(0xFFE0F4F4), Color(0xFF008080).copy(alpha = 0.15f), false)
-            else -> Triple(Color.White, Color(0xFFF0F0F0), false) // Classic White
-        }
-
-        val txtColor = if (isDarkTheme) Color.White else Color.DarkGray
-        val labelColor = if (isDarkTheme) Color.LightGray else Color.Gray
-
-        when (preset) {
-            "Horizontal Gamepad" -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(LightSlate)
-                            .padding(8.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        Text("Tilt Pitch: ${String.format("%.1f", accel.second)}", color = Color.White, fontSize = 11.sp)
-                        Text("Tilt Roll: ${String.format("%.1f", accel.first)}", color = Color.White, fontSize = 11.sp)
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(shellBg)
-                            .border(2.dp, themeColor.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Left d-pad section
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("STEER", fontSize = 10.sp, color = labelColor, fontWeight = FontWeight.Bold)
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Box(
-                                modifier = Modifier.size((100 * scale).dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Box(modifier = Modifier.width((100 * scale).dp).height((30 * scale).dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF2E2E2E)))
-                                Box(modifier = Modifier.width((30 * scale).dp).height((100 * scale).dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF2E2E2E)))
-                                
-                                WiiDpadButton(modifier = Modifier.align(Alignment.TopCenter).size((30 * scale).dp, (35 * scale).dp), onClick = { b -> viewModel.onButtonPressed("UP", b) }, text = "▲")
-                                WiiDpadButton(modifier = Modifier.align(Alignment.BottomCenter).size((30 * scale).dp, (35 * scale).dp), onClick = { b -> viewModel.onButtonPressed("DOWN", b) }, text = "▼")
-                                WiiDpadButton(modifier = Modifier.align(Alignment.CenterStart).size((35 * scale).dp, (30 * scale).dp), onClick = { b -> viewModel.onButtonPressed("LEFT", b) }, text = "◀")
-                                WiiDpadButton(modifier = Modifier.align(Alignment.CenterEnd).size((35 * scale).dp, (30 * scale).dp), onClick = { b -> viewModel.onButtonPressed("RIGHT", b) }, text = "▶")
-                            }
-                        }
-
-                        // Center controllers
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.SpaceEvenly,
-                            modifier = Modifier.fillMaxHeight()
-                        ) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                WiiSmallRoundButton("-", scale = scale, onClick = { b -> viewModel.onButtonPressed("MINUS", b) })
-                                InteractiveControllerButton(
-                                    onClick = { b -> viewModel.onButtonPressed("HOME", b) },
-                                    modifier = Modifier.size((24 * scale).dp)
-                                ) { isPressed ->
-                                    Box(
-                                        modifier = Modifier.fillMaxSize().clip(CircleShape).background(if (isPressed) CrimsonRed else Color(0xFFF0F0F0)).border(1.dp, Color.LightGray, CircleShape),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(Icons.Default.Home, contentDescription = "Home", tint = if (isPressed) Color.White else CrimsonRed, modifier = Modifier.size((12 * scale).dp))
-                                    }
-                                }
-                                WiiSmallRoundButton("+", scale = scale, onClick = { b -> viewModel.onButtonPressed("PLUS", b) })
-                            }
-
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .clickable { viewModel.onButtonPressed("SHAKE", true) }
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.DarkGray)
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Icon(Icons.Default.Refresh, contentDescription = null, tint = WiiBlue, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("SHAKE CONTROLLER", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        // Right action buttons
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                WiiSquareButton("1", scale = scale, onClick = { b -> viewModel.onButtonPressed("ONE", b) })
-                                WiiSquareButton("2", scale = scale, onClick = { b -> viewModel.onButtonPressed("TWO", b) })
-                            }
-
-                            InteractiveControllerButton(
-                                onClick = { b -> viewModel.onButtonPressed("A", b) },
-                                modifier = Modifier.size((50 * scale).dp)
-                            ) { isPressed ->
-                                Box(
-                                    modifier = Modifier.fillMaxSize().clip(CircleShape).background(if (isPressed) themeColor else buttonBg).border(2.dp, Color.LightGray, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("A", fontSize = (18 * scale).sp, fontWeight = FontWeight.Bold, color = if (isPressed) Color.White else txtColor)
-                                }
-                            }
-
-                            InteractiveControllerButton(
-                                onClick = { b -> viewModel.onButtonPressed("B", b) },
-                                modifier = Modifier.width((80 * scale).dp).height((34 * scale).dp)
-                            ) { isPressed ->
-                                Box(
-                                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp)).background(if (isPressed) themeColor else buttonBg).border(1.dp, Color.LightGray, RoundedCornerShape(6.dp)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("B", fontSize = (11 * scale).sp, fontWeight = FontWeight.SemiBold, color = if (isPressed) Color.White else txtColor)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            "Big Buttons" -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(12.dp)
-                ) {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(shellBg)
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        val btns = listOf("A", "B", "UP", "DOWN", "LEFT", "RIGHT", "ONE", "TWO", "MINUS", "PLUS", "HOME", "SHAKE")
-                        items(btns) { name ->
-                            InteractiveControllerButton(
-                                onClick = { isPressed -> viewModel.onButtonPressed(name, isPressed) },
-                                modifier = Modifier.fillMaxWidth().height((64 * scale).dp)
-                            ) { isPressed ->
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(if (isPressed) themeColor else buttonBg)
-                                        .border(2.dp, Color.LightGray.copy(alpha = 0.5f), RoundedCornerShape(12.dp)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(name, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (isPressed) Color.White else txtColor)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            else -> {
-                // Classic Tall Vertical Wii Remote
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(12.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                        verticalArrangement = Arrangement.SpaceBetween,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(LightSlate)
-                                .padding(12.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text("Motion Tracker", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.LightGray, textAlign = TextAlign.Center)
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            Box(
-                                modifier = Modifier.size(110.dp).clip(CircleShape).background(SlateBackground).border(1.dp, Color.DarkGray, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                        val center = Offset(size.width / 2, size.height / 2)
-                                        val radius = size.width / 2
-                                        drawCircle(color = Color.DarkGray.copy(alpha = 0.4f), radius = radius * 0.5f, center = center, style = Stroke(width = 1f))
-                                        drawLine(color = Color.DarkGray, start = Offset(0f, center.y), end = Offset(size.width, center.y))
-                                        drawLine(color = Color.DarkGray, start = Offset(center.x, 0f), end = Offset(center.x, size.height))
-
-                                        val maxForce = 9.80665f
-                                        val defX = (-accel.first / maxForce).coerceIn(-1f, 1f) * (radius - 12.dp.toPx())
-                                        val defY = (accel.second / maxForce).coerceIn(-1f, 1f) * (radius - 12.dp.toPx())
-
-                                        drawCircle(color = themeColor, radius = 8.dp.toPx(), center = Offset(center.x + defX, center.y + defY))
-                                }
-                            }
-                        }
-
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(LightSlate)
-                                .padding(12.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text("Shake Trigger", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.LightGray)
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            IconButton(
-                                onClick = { viewModel.onButtonPressed("SHAKE", true) },
-                                modifier = Modifier.size((50 * scale).dp).clip(CircleShape).background(Color.White.copy(alpha = 0.1f)).border(1.dp, themeColor, CircleShape)
-                            ) {
-                                Icon(Icons.Default.Refresh, contentDescription = "Trigger Shake", tint = themeColor, modifier = Modifier.size(28.dp))
-                            }
-                        }
-
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(LightSlate)
-                                .padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            TelemetryRow("Acc X", String.format("%.2f", accel.first))
-                            TelemetryRow("Acc Y", String.format("%.2f", accel.second))
-                            TelemetryRow("Acc Z", String.format("%.2f", accel.third))
-                            TelemetryRow("Gyro Z", String.format("%.1f", Math.toDegrees(gyro.third.toDouble())))
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Box(
-                        modifier = Modifier
-                            .weight(1.3f)
-                            .fillMaxHeight()
-                            .clip(RoundedCornerShape(24.dp))
-                            .background(shellBg)
-                            .border(2.dp, themeColor.copy(alpha = 0.4f), RoundedCornerShape(24.dp))
-                            .shadow(4.dp, RoundedCornerShape(24.dp))
-                            .padding(vertical = 12.dp, horizontal = 10.dp),
-                        contentAlignment = Alignment.TopCenter
-                    ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Wii", fontSize = 24.sp, color = txtColor, fontWeight = FontWeight.Bold, fontFamily = FontFamily.SansSerif, letterSpacing = (-1).sp)
-
-                            Box(
-                                modifier = Modifier.size((100 * scale).dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Box(modifier = Modifier.width((100 * scale).dp).height((28 * scale).dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF2E2E2E)))
-                                Box(modifier = Modifier.width((28 * scale).dp).height((100 * scale).dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFF2E2E2E)))
-                                Box(modifier = Modifier.size((28 * scale).dp).clip(CircleShape).background(Color(0xFF1D1D1D)))
-
-                                WiiDpadButton(modifier = Modifier.align(Alignment.TopCenter).size((28 * scale).dp, (35 * scale).dp), onClick = { press -> viewModel.onButtonPressed("UP", press) }, text = "▲")
-                                WiiDpadButton(modifier = Modifier.align(Alignment.BottomCenter).size((28 * scale).dp, (35 * scale).dp), onClick = { press -> viewModel.onButtonPressed("DOWN", press) }, text = "▼")
-                                WiiDpadButton(modifier = Modifier.align(Alignment.CenterStart).size((35 * scale).dp, (28 * scale).dp), onClick = { press -> viewModel.onButtonPressed("LEFT", press) }, text = "◀")
-                                WiiDpadButton(modifier = Modifier.align(Alignment.CenterEnd).size((35 * scale).dp, (28 * scale).dp), onClick = { press -> viewModel.onButtonPressed("RIGHT", press) }, text = "▶")
-                            }
-
-                            InteractiveControllerButton(
-                                onClick = { press -> viewModel.onButtonPressed("A", press) },
-                                modifier = Modifier.size((56 * scale).dp)
-                            ) { isPressed ->
-                                Box(
-                                    modifier = Modifier.fillMaxSize().clip(CircleShape).background(if (isPressed) themeColor else buttonBg).border(2.dp, Color.LightGray, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("A", fontSize = (20 * scale).sp, fontWeight = FontWeight.Bold, color = if (isPressed) Color.White else txtColor)
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                WiiSmallRoundButton("-", scale = scale) { press -> viewModel.onButtonPressed("MINUS", press) }
-                                    
-                                InteractiveControllerButton(
-                                    onClick = { press -> viewModel.onButtonPressed("HOME", press) },
-                                    modifier = Modifier.size((26 * scale).dp)
-                                ) { isPressed ->
-                                    Box(
-                                        modifier = Modifier.fillMaxSize().clip(CircleShape).background(if (isPressed) CrimsonRed else buttonBg).border(1.dp, Color.LightGray, CircleShape),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(Icons.Default.Home, contentDescription = "Home", tint = if (isPressed) Color.White else CrimsonRed, modifier = Modifier.size((14 * scale).dp))
-                                    }
-                                }
-
-                                WiiSmallRoundButton("+", scale = scale) { press -> viewModel.onButtonPressed("PLUS", press) }
-                            }
-
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                WiiSquareButton("1", scale = scale) { press -> viewModel.onButtonPressed("ONE", press) }
-                                WiiSquareButton("2", scale = scale) { press -> viewModel.onButtonPressed("TWO", press) }
-                            }
-
-                            InteractiveControllerButton(
-                                onClick = { press -> viewModel.onButtonPressed("B", press) },
-                                modifier = Modifier.fillMaxWidth(0.9f).height((38 * scale).dp)
-                            ) { isPressed ->
-                                Box(
-                                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)).background(if (isPressed) themeColor else buttonBg).border(1.dp, Color.DarkGray, RoundedCornerShape(8.dp)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("B TRIGGER (BACK)", fontSize = (11 * scale).sp, fontWeight = FontWeight.ExtraBold, color = if (isPressed) Color.White else txtColor)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun TelemetryRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(label, color = Color.Gray, fontSize = 10.sp)
-        Text(value, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-fun WiiDpadButton(
-    modifier: Modifier,
-    onClick: (Boolean) -> Unit,
-    text: String
-) {
-    var isPressed by remember { mutableStateOf(false) }
-
-    Box(
-        modifier = modifier
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = {
-                        isPressed = true
-                        onClick(true)
-                        tryAwaitRelease()
-                        isPressed = false
-                        onClick(false)
-                    }
                 )
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = text,
-            color = if (isPressed) WiiBlue else Color.White,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold
-        )
-    }
-}
-
-@Composable
-fun InteractiveControllerButton(
-    onClick: (Boolean) -> Unit,
-    modifier: Modifier = Modifier,
-    content: @Composable (isPressed: Boolean) -> Unit
-) {
-    var isPressed by remember { mutableStateOf(false) }
-
-    Box(
-        modifier = modifier
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = {
-                        isPressed = true
-                        onClick(true)
-                        tryAwaitRelease()
-                        isPressed = false
-                        onClick(false)
-                    }
-                )
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        content(isPressed)
-    }
-}
-
-@Composable
-fun WiiSmallRoundButton(
-    symbol: String,
-    scale: Float,
-    onClick: (Boolean) -> Unit
-) {
-    InteractiveControllerButton(
-        onClick = onClick,
-        modifier = Modifier
-            .size((24 * scale).dp)
-    ) { isPressed ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(CircleShape)
-                .background(if (isPressed) WiiBlue else Color(0xFFF0F0F0))
-                .border(1.dp, Color.LightGray, CircleShape),
-            contentAlignment = Alignment.Center
         ) {
-            Text(
-                symbol,
-                fontSize = (13 * scale).sp,
-                color = if (isPressed) Color.White else Color.DarkGray,
-                fontWeight = FontWeight.Bold
-            )
+            when (activeTab) {
+                0 -> ControllerTab(viewModel)
+                1 -> ProfilesTab(viewModel)
+                2 -> SettingsTab(viewModel)
+            }
         }
     }
 }
 
 @Composable
-fun WiiSquareButton(
-    text: String,
-    scale: Float,
-    onClick: (Boolean) -> Unit
-) {
-    InteractiveControllerButton(
-        onClick = onClick,
-        modifier = Modifier
-            .size((34 * scale).dp)
-    ) { isPressed ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(4.dp))
-                .background(if (isPressed) WiiBlue else Color(0xFFEAEAEA))
-                .border(1.dp, Color.LightGray, RoundedCornerShape(4.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text,
-                fontSize = (14 * scale).sp,
-                fontWeight = FontWeight.Bold,
-                color = if (isPressed) Color.White else Color.DarkGray
-            )
-        }
-    }
-}
+fun ControllerTab(viewModel: WiiControllerViewModel) {
+    val context = LocalContext.current
+    val accel by viewModel.accelState.collectAsStateWithLifecycle()
+    val gyro by viewModel.gyroState.collectAsStateWithLifecycle()
+    val isDsu by viewModel.isDsuRunning.collectAsStateWithLifecycle()
+    val btState by viewModel.btConnectionState.collectAsStateWithLifecycle()
+    val btRole by viewModel.btRole.collectAsStateWithLifecycle()
+    val isIrEnabled by viewModel.isIrModeEnabled.collectAsStateWithLifecycle()
 
-@Composable
-fun ServerHubTab(
-    viewModel: WiiControllerViewModel,
-    isDsuRunning: Boolean,
-    isAudioRunning: Boolean,
-    sentCount: Int,
-    recvCount: Int,
-    fpsVal: Int,
-    audioBytes: Long,
-    isAudioStreaming: Boolean,
-    connections: List<ConnectionHistoryEntity>,
-    phoneIp: String,
-    themeColor: Color
-) {
-    var customDsuPort by remember { mutableStateOf("26760") }
-    var customAudioPort by remember { mutableStateOf("26761") }
-
-    var saveProfileIp by remember { mutableStateOf("") }
-    var saveProfileDesc by remember { mutableStateOf("") }
+    val pitch = -accel.second * 0.15f
+    val roll = accel.first * 0.15f
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .testTag("controller_tab_root"),
+        contentPadding = PaddingValues(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
+            // Header Info Bar
             Card(
-                colors = CardDefaults.cardColors(containerColor = LightSlate),
+                colors = CardDefaults.cardColors(containerColor = CardDark.copy(alpha = 0.8f)),
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "Low-Latency Server Launchpad",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
-                            Text("DSU input Server (Port)", fontSize = 12.sp, color = Color.LightGray)
-                            TextField(
-                                value = customDsuPort,
-                                onValueChange = { customDsuPort = it.filter { c -> c.isDigit() } },
-                                singleLine = true,
-                                readOnly = isDsuRunning,
-                                textStyle = TextStyle(fontSize = 13.sp, color = Color.White),
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = SlateBackground,
-                                    unfocusedContainerColor = SlateBackground,
-                                    focusedIndicatorColor = themeColor
-                                ),
-                                modifier = Modifier
-                                    .width(90.dp)
-                                    .height(50.dp)
-                            )
-                        }
-
-                        Button(
-                            onClick = {
-                                if (isDsuRunning) {
-                                    viewModel.stopDsuServer()
-                                } else {
-                                    val portInt = customDsuPort.toIntOrNull() ?: 26760
-                                    viewModel.startDsuServer(portInt)
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isDsuRunning) CrimsonRed else themeColor
-                            ),
-                            modifier = Modifier.testTag("toggle_dsu_btn")
-                        ) {
-                            Text(if (isDsuRunning) "Stop DSU" else "Start DSU", color = Color.White)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
-                            Text("Wii Sound Server (Port)", fontSize = 12.sp, color = Color.LightGray)
-                            TextField(
-                                value = customAudioPort,
-                                onValueChange = { customAudioPort = it.filter { c -> c.isDigit() } },
-                                singleLine = true,
-                                readOnly = isAudioRunning,
-                                textStyle = TextStyle(fontSize = 13.sp, color = Color.White),
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = SlateBackground,
-                                    unfocusedContainerColor = SlateBackground,
-                                    focusedIndicatorColor = themeColor
-                                ),
-                                modifier = Modifier
-                                    .width(90.dp)
-                                    .height(50.dp)
-                            )
-                        }
-
-                        Button(
-                            onClick = {
-                                val portInt = customAudioPort.toIntOrNull() ?: 26761
-                                viewModel.toggleAudioServer(portInt)
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isAudioRunning) CrimsonRed else Color.DarkGray
-                            ),
-                            modifier = Modifier.testTag("toggle_audio_btn")
-                        ) {
-                            Text(if (isAudioRunning) "Stop Speaker" else "Start Speaker", color = Color.White)
-                        }
-                    }
-                }
-            }
-        }
-
-        if (isDsuRunning || isAudioRunning) {
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = LightSlate),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text("Live Server Telemetry", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            TelemetryBox("DSU Speed", "${fpsVal}Hz", themeColor)
-                            TelemetryBox("DSU Out / In", "$sentCount / $recvCount", Color.Green)
-                            TelemetryBox(
-                                "Wii Sound",
-                                if (isAudioRunning) (if (isAudioStreaming) "Connected" else "Waiting") else "Offline",
-                                if (isAudioStreaming) themeColor else Color.Gray
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = LightSlate),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text(
-                        "Nostalgia Sound & Haptic Test Board",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "Synthesize raw chimes directly on device speakers to check sounds and try haptics.",
-                        fontSize = 11.sp,
-                        color = Color.Gray
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = { viewModel.playSyntheticSound(1) },
-                            colors = ButtonDefaults.buttonColors(containerColor = SlateBackground),
-                            modifier = Modifier.weight(1f).testTag("play_click_btn")
-                        ) {
-                            Text("Wii Click", color = Color.White, fontSize = 11.sp)
-                        }
-                        Button(
-                            onClick = {
-                                viewModel.playSyntheticSound(2)
-                                viewModel.triggerVibration(180, 255)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = SlateBackground),
-                            modifier = Modifier.weight(1.1f).testTag("play_chime_btn")
-                        ) {
-                            Text("Wii Chime", color = themeColor, fontSize = 11.sp)
-                        }
-                        Button(
-                            onClick = { viewModel.triggerVibration(400, 255) },
-                            colors = ButtonDefaults.buttonColors(containerColor = SlateBackground),
-                            modifier = Modifier.weight(1f).testTag("play_rumble_btn")
-                        ) {
-                            Text("Rumble ⌁", color = CrimsonRed, fontSize = 11.sp)
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = LightSlate),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text("Save Connection Profile", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    OutlinedTextField(
-                        value = saveProfileIp,
-                        onValueChange = { saveProfileIp = it },
-                        label = { Text("PC IP Address", color = Color.Gray) },
-                        textStyle = TextStyle(color = Color.White),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = themeColor,
-                            unfocusedBorderColor = Color.DarkGray
-                        ),
-                        modifier = Modifier.fillMaxWidth().testTag("profile_ip_field")
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedTextField(
-                        value = saveProfileDesc,
-                        onValueChange = { saveProfileDesc = it },
-                        label = { Text("Description (e.g. My PC - Dolphin)", color = Color.Gray) },
-                        textStyle = TextStyle(color = Color.White),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = themeColor,
-                            unfocusedBorderColor = Color.DarkGray
-                        ),
-                        modifier = Modifier.fillMaxWidth().testTag("profile_desc_field")
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Button(
-                        onClick = {
-                            if (saveProfileIp.isNotBlank()) {
-                                viewModel.saveConnectionToHistory(saveProfileIp, customDsuPort.toIntOrNull() ?: 26760, saveProfileDesc)
-                                saveProfileIp = ""
-                                saveProfileDesc = ""
-                                viewModel.triggerVibration(50, 100)
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                        modifier = Modifier.align(Alignment.End).testTag("save_profile_btn")
-                    ) {
-                        Text("Save Profile", color = Color.White)
-                    }
-                }
-            }
-        }
-
-        if (connections.isNotEmpty()) {
-            item {
-                Text(
-                    "Historical Profiles & Saved Servers",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-
-            items(connections) { profile ->
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = LightSlate.copy(alpha = 0.6f)),
-                    shape = RoundedCornerShape(8.dp),
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            saveProfileIp = profile.ipAddress
-                            customDsuPort = profile.port.toString()
-                            viewModel.triggerVibration(30, 80)
-                        }
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Column {
+                        Text(
+                            text = "Wii MotionRemote",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (btRole == BluetoothRole.SENDER && btState == BtConnectionState.CONNECTED) {
+                                "Classic Bluetooth Transmitting"
+                            } else if (isDsu) {
+                                "DSU UDP Link Broadcasting"
+                            } else {
+                                "Ready to pair or sync"
+                            },
+                            fontSize = 12.sp,
+                            color = SoftGrey
+                        )
+                    }
+                    Button(
+                        onClick = { viewModel.calibrateMotionPlus() },
+                        colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("quick_recalibrate_button")
                     ) {
-                        Column {
-                            Text(
-                                profile.description.ifEmpty { "Wii Dolphin Server" },
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            Text(
-                                "${profile.ipAddress}:${profile.port}",
-                                fontSize = 11.sp,
-                                color = themeColor
-                            )
-                        }
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Calibrate", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
 
-                        IconButton(
-                            onClick = { viewModel.deleteProfile(profile.ipAddress, profile.port) }
-                        ) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = "Delete Profile",
-                                tint = CrimsonRed.copy(alpha = 0.8f),
-                                modifier = Modifier.size(20.dp)
-                            )
+        item {
+            // Visualizer Panel (Perspective Rotating 3D wireframe Cube based on pitch & roll!)
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardDark),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "3D Gyro Perspective Preview",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ElectricBlue
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .size(140.dp)
+                            .clip(CircleShape)
+                            .background(ConsoleDark)
+                            .border(1.dp, ElectricBlue.copy(alpha = 0.4f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        GyroPerspectiveCube(pitch = pitch, roll = roll, modifier = Modifier.fillMaxSize())
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("ACCEL PITCH", fontSize = 10.sp, color = SoftGrey)
+                            Text(String.format("%.2f°", pitch * 57.29), fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("ACCEL ROLL", fontSize = 10.sp, color = SoftGrey)
+                            Text(String.format("%.2f°", roll * 57.29), fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("GYRO Z", fontSize = 10.sp, color = SoftGrey)
+                            Text(String.format("%.2f rad/s", gyro.third), fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
+        }
 
-            item {
-                TextButton(
-                    onClick = { viewModel.clearHistory() },
-                    colors = ButtonDefaults.textButtonColors(contentColor = CrimsonRed),
-                    modifier = Modifier.fillMaxWidth().testTag("clear_history_btn")
+        item {
+            // Wii Mote Body Representation
+            WiiMoteMockupLayout(viewModel)
+        }
+
+        item {
+            // Dolphin Native Application Shortcut
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardDark),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val success = viewModel.launchDolphinApp(context)
+                        if (!success) {
+                            Toast
+                                .makeText(
+                                    context,
+                                    "Is Dolphin installed? Launched intent triggers not found.",
+                                    Toast.LENGTH_SHORT
+                                )
+                                .show()
+                        }
+                    }
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Clear All Saved Connections", fontSize = 11.sp)
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = ActiveGreen,
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column {
+                        Text("Connect Android Dolphin", fontWeight = FontWeight.Bold, color = Color.White)
+                        Text("Tap to quickly open default Dolphin app on this phone", fontSize = 11.sp, color = SoftGrey)
+                    }
                 }
             }
         }
@@ -1118,640 +305,853 @@ fun ServerHubTab(
 }
 
 @Composable
-fun TelemetryBox(label: String, value: String, valueColor: Color) {
-    Box(
-        modifier = Modifier
-            .width(100.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(SlateBackground)
-            .padding(10.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, fontSize = 9.sp, color = Color.Gray, textAlign = TextAlign.Center)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(value, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = valueColor, textAlign = TextAlign.Center)
+fun GyroPerspectiveCube(pitch: Float, roll: Float, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val cx = size.width / 2
+        val cy = size.height / 2
+        val scale = 50f
+
+        // 3D coordinates for Cube vertices
+        val boxPoints = arrayOf(
+            floatArrayOf(-1f, -1f, -1f),
+            floatArrayOf(1f, -1f, -1f),
+            floatArrayOf(1f, 1f, -1f),
+            floatArrayOf(-1f, 1f, -1f),
+            floatArrayOf(-1f, -1f, 1f),
+            floatArrayOf(1f, -1f, 1f),
+            floatArrayOf(1f, 1f, 1f),
+            floatArrayOf(-1f, 1f, 1f)
+        )
+
+        val cp = cos(pitch)
+        val sp = sin(pitch)
+        val cr = cos(roll)
+        val sr = sin(roll)
+
+        val projPoints = boxPoints.map { pt ->
+            val x = pt[0]
+            val y = pt[1]
+            val z = pt[2]
+
+            // Rotate along pitch axis (X axis representation)
+            val rY1 = y * cp - z * sp
+            val rZ1 = y * sp + z * cp
+
+            // Rotate along roll axis (Z/Y representation)
+            val rX2 = x * cr + rZ1 * sr
+            val rZ2 = -x * sr + rZ1 * cr
+
+            // 3D point perspective layout
+            val cameraDist = 3.5f
+            val calculatedX = cx + (rX2 * scale) / (1f + (rZ2 / cameraDist))
+            val calculatedY = cy + (rY1 * scale) / (1f + (rZ2 / cameraDist))
+            Offset(calculatedX, calculatedY)
+        }
+
+        val indices = arrayOf(
+            Pair(0, 1), Pair(1, 2), Pair(2, 3), Pair(3, 0), // back Face
+            Pair(4, 5), Pair(5, 6), Pair(6, 7), Pair(7, 4), // front Face
+            Pair(0, 4), Pair(1, 5), Pair(2, 6), Pair(3, 7)  // edges of perspective
+        )
+
+        indices.forEach { edge ->
+            drawLine(
+                color = ElectricBlue,
+                start = projPoints[edge.first],
+                end = projPoints[edge.second],
+                strokeWidth = 3.dp.toPx()
+            )
         }
     }
 }
 
 @Composable
-fun BluetoothSyncTab(viewModel: WiiControllerViewModel, themeColor: Color) {
-    val context = LocalContext.current
-    val btRole by viewModel.btManager.role.collectAsStateWithLifecycle()
-    val btState by viewModel.btManager.connectionState.collectAsStateWithLifecycle()
-    val btDeviceName by viewModel.btManager.connectedDeviceName.collectAsStateWithLifecycle()
-    val pairedDevices by viewModel.btManager.pairedDevices.collectAsStateWithLifecycle()
-    
-    val bytesProcessed by viewModel.btManager.bytesTransmitted.collectAsStateWithLifecycle()
-    val btFps by viewModel.btManager.btFps.collectAsStateWithLifecycle()
+fun WiiMoteMockupLayout(viewModel: WiiControllerViewModel) {
+    val isNunchuck by viewModel.isNunchuckEnabled.collectAsStateWithLifecycle()
+    val isIr by viewModel.isIrModeEnabled.collectAsStateWithLifecycle()
 
-    val permissionsToRequest = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        listOf(
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.BLUETOOTH_SCAN,
-            Manifest.permission.BLUETOOTH_ADVERTISE
-        )
-    } else {
-        listOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        )
-    }
-
-    var permissionsGranted by remember {
-        mutableStateOf(
-            permissionsToRequest.all {
-                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-            }
-        )
-    }
-
-    val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        permissionsGranted = result.values.all { it }
-        if (permissionsGranted) {
-            viewModel.btManager.refreshPairedDevices()
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    LaunchedEffect(permissionsGranted) {
-        if (permissionsGranted) {
-            viewModel.btManager.refreshPairedDevices()
-        }
-    }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(CardDark, shape = RoundedCornerShape(24.dp))
+            .border(1.dp, SoftGrey.copy(alpha = 0.2f), RoundedCornerShape(24.dp))
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = LightSlate),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Share, contentDescription = null, tint = themeColor, modifier = Modifier.size(32.dp))
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text("Dolphin Dual-Device Bluetooth Link", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Tactile Simulation Panel", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (isNunchuck) {
+                    Box(modifier = Modifier.background(ElectricBlue.copy(alpha = 0.2f), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                        Text("NUNCHUCK", fontSize = 9.sp, color = ElectricBlue, fontWeight = FontWeight.Bold)
                     }
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        "Pair two Android devices directly over Bluetooth. One device acts as the raw motion \"Sender\" (your handheld controller), while the other device runs as the \"Receiver Bridge\" routing packet updates instantly over local Wi-Fi to the Dolphin Emulator.",
-                        fontSize = 12.sp, color = Color.LightGray, lineHeight = 16.sp
-                    )
+                }
+                if (isIr) {
+                    Box(modifier = Modifier.background(ActiveGreen.copy(alpha = 0.2f), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                        Text("IR ON", fontSize = 9.sp, color = ActiveGreen, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
 
-        if (!permissionsGranted) {
+        // Custom Analog stick container (simulate Nunchuck stick details or primary stick)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Stick (Deadzone Applied)", fontSize = 10.sp, color = SoftGrey)
+            Spacer(modifier = Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(130.dp)
+                    .clip(CircleShape)
+                    .background(ConsoleDark)
+                    .border(2.dp, SoftGrey, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                var stickOffsetX by remember { mutableStateOf(0f) }
+                var stickOffsetY by remember { mutableStateOf(0f) }
+
+                Box(
+                    modifier = Modifier
+                        .offset(stickOffsetX.dp, stickOffsetY.dp)
+                        .size(48.dp)
+                        .shadow(4.dp, CircleShape)
+                        .clip(CircleShape)
+                        .background(ElectricBlue)
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragEnd = {
+                                    stickOffsetX = 0f
+                                    stickOffsetY = 0f
+                                    viewModel.onStickMoved(0f, 0f)
+                                }
+                            ) { change, dragAmount ->
+                                change.consume()
+                                stickOffsetX = (stickOffsetX + dragAmount.x / 3f).coerceIn(-40f, 40f)
+                                stickOffsetY = (stickOffsetY + dragAmount.y / 3f).coerceIn(-40f, 40f)
+                                viewModel.onStickMoved(stickOffsetX / 40f, -stickOffsetY / 40f)
+                            }
+                        }
+                )
+            }
+        }
+
+        // Standard Wii Controller Button Matrix Layout (Vertical Stack representation)
+        Column(
+            modifier = Modifier.width(180.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // D-PAD Block
+            Box(
+                modifier = Modifier
+                    .size(100.dp)
+                    .background(ConsoleDark, shape = RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                // Cross Arrows
+                TactileButton(modifier = Modifier.align(Alignment.TopCenter).size(28.dp), tag = "UP", text = "▲", viewModel = viewModel)
+                TactileButton(modifier = Modifier.align(Alignment.BottomCenter).size(28.dp), tag = "DOWN", text = "▼", viewModel = viewModel)
+                TactileButton(modifier = Modifier.align(Alignment.CenterStart).size(28.dp), tag = "LEFT", text = "◀", viewModel = viewModel)
+                TactileButton(modifier = Modifier.align(Alignment.CenterEnd).size(28.dp), tag = "RIGHT", text = "▶", viewModel = viewModel)
+            }
+
+            // Big Blue 'A' Button
+            Box(
+                modifier = Modifier
+                    .size(68.dp)
+                    .clip(CircleShape)
+                    .background(ElectricBlue)
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragEnd = { viewModel.onButtonPressed("A", false) }
+                        ) { change, _ ->
+                            change.consume()
+                            viewModel.onButtonPressed("A", true)
+                        }
+                    }
+                    .testTag("button_a_simulation"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("A", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            }
+
+            // Trigger 'B' Button (rendered beneath or as a simple long selector button)
+            Button(
+                onClick = {},
+                colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragEnd = { viewModel.onButtonPressed("B", false) }
+                        ) { change, _ ->
+                            change.consume()
+                            viewModel.onButtonPressed("B", true)
+                        }
+                    }
+                    .testTag("button_b_simulation")
+            ) {
+                Text("B (TRIGGER)", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+
+            // Numeric layout row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                TactileButton(modifier = Modifier.size(44.dp), tag = "MINUS", text = "—", viewModel = viewModel)
+                TactileButton(modifier = Modifier.size(44.dp), tag = "HOME", text = "⌂", viewModel = viewModel)
+                TactileButton(modifier = Modifier.size(44.dp), tag = "PLUS", text = "＋", viewModel = viewModel)
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                TactileButton(modifier = Modifier.size(48.dp), tag = "ONE", text = "1", viewModel = viewModel)
+                TactileButton(modifier = Modifier.size(48.dp), tag = "TWO", text = "2", viewModel = viewModel)
+            }
+
+            // Custom Action sound triggers
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Button(
+                    onClick = { viewModel.playSyntheticSound(1) },
+                    colors = ButtonDefaults.buttonColors(containerColor = CardDark),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Sound 1", fontSize = 10.sp, maxLines = 1)
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                Button(
+                    onClick = { viewModel.playSyntheticSound(2) },
+                    colors = ButtonDefaults.buttonColors(containerColor = CardDark),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Sound 2", fontSize = 10.sp, maxLines = 1)
+                }
+            }
+
+            // Physical Shake motion simulator button
+            Button(
+                onClick = {},
+                colors = ButtonDefaults.buttonColors(containerColor = ErrorCrimson),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragEnd = { viewModel.onButtonPressed("SHAKE", false) }
+                        ) { change, _ ->
+                            change.consume()
+                            viewModel.onButtonPressed("SHAKE", true)
+                        }
+                    }
+                    .testTag("shake_simulation_button")
+            ) {
+                Text("SIMULATE SHAKE", fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
+            }
+        }
+    }
+}
+
+@Composable
+fun TactileButton(modifier: Modifier, tag: String, text: String, viewModel: WiiControllerViewModel) {
+    Box(
+        modifier = modifier
+            .background(Color.Gray, shape = CircleShape)
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragEnd = { viewModel.onButtonPressed(tag, false) }
+                ) { change, _ ->
+                    change.consume()
+                    viewModel.onButtonPressed(tag, true)
+                }
+            }
+            .testTag("btn_${tag.lowercase()}"),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+    }
+}
+
+@Composable
+fun ProfilesTab(viewModel: WiiControllerViewModel) {
+    val profiles by viewModel.gameProfiles.collectAsStateWithLifecycle()
+    var isInserting by remember { mutableStateOf(false) }
+
+    var pName by remember { mutableStateOf("") }
+    var pSx by remember { mutableStateOf(1.0f) }
+    var pSy by remember { mutableStateOf(1.0f) }
+    var pSz by remember { mutableStateOf(1.0f) }
+    var pDz by remember { mutableStateOf(0.05f) }
+    var pSt by remember { mutableStateOf(1.5f) }
+    var pIr by remember { mutableStateOf(false) }
+    var pVol by remember { mutableStateOf(100f) }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("profiles_tab_root"),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text("Wii Console Profiles", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Text("Switch or build dynamic custom game sensitivity calibrations", fontSize = 12.sp, color = SoftGrey)
+        }
+
+        if (isInserting) {
             item {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = CrimsonRed.copy(alpha = 0.15f)),
-                    shape = RoundedCornerShape(10.dp)
+                    colors = CardDefaults.cardColors(containerColor = CardDark),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth().border(1.dp, ElectricBlue, RoundedCornerShape(16.dp))
                 ) {
-                    Column(modifier = Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Bluetooth Platform Permissions Required", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Android requires local connectivity permissions before searching/communicating over physical hardware radios.", fontSize = 12.sp, color = Color.LightGray, textAlign = TextAlign.Center)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Button(
-                            onClick = { launcher.launch(permissionsToRequest.toTypedArray()) },
-                            colors = ButtonDefaults.buttonColors(containerColor = CrimsonRed)
-                        ) {
-                            Text("Grant Wireless permissions", color = Color.White)
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Add Custom Mapping", fontWeight = FontWeight.Bold, color = Color.White)
+                        OutlinedTextField(
+                            value = pName,
+                            onValueChange = { pName = it },
+                            label = { Text("Profile Name") },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = ElectricBlue,
+                                unfocusedBorderColor = SoftGrey
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("profile_name_input")
+                        )
+
+                        Text("Sensitivity Multipliers", fontSize = 12.sp, color = SoftGrey, fontWeight = FontWeight.Bold)
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("X Axis: ${String.format("%.1f×", pSx)}", fontSize = 10.sp, color = SoftGrey)
+                                Slider(value = pSx, onValueChange = { pSx = it }, valueRange = 0.2f..3.0f)
+                            }
+                        }
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Y Axis: ${String.format("%.1f×", pSy)}", fontSize = 10.sp, color = SoftGrey)
+                                Slider(value = pSy, onValueChange = { pSy = it }, valueRange = 0.2f..3.0f)
+                            }
+                        }
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Z Axis: ${String.format("%.1f×", pSz)}", fontSize = 10.sp, color = SoftGrey)
+                                Slider(value = pSz, onValueChange = { pSz = it }, valueRange = 0.2f..3.0f)
+                            }
+                        }
+
+                        Text("Stick Deadzone: ${String.format("%.0f%%", pDz * 100f)}", fontSize = 11.sp, color = Color.White)
+                        Slider(value = pDz, onValueChange = { pDz = it }, valueRange = 0.0f..0.20f)
+
+                        Text("Shake Threshold: ${String.format("%.1f G", pSt)}", fontSize = 11.sp, color = Color.White)
+                        Slider(value = pSt, onValueChange = { pSt = it }, valueRange = 0.5f..3.0f)
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = pIr, onCheckedChange = { pIr = it })
+                            Text("IR Pointer Emulation", color = SoftGrey, fontSize = 12.sp)
+                        }
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(onClick = { isInserting = false }) {
+                                Text("Cancel", color = Color.LightGray)
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    if (pName.isNotBlank()) {
+                                        viewModel.saveProfile(pName, pSx, pSy, pSz, pDz, pSt, pIr, pVol)
+                                        pName = ""
+                                        isInserting = false
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                                modifier = Modifier.testTag("profile_save_button")
+                            ) {
+                                Text("Save Profile")
+                            }
                         }
                     }
                 }
             }
         } else {
             item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = LightSlate),
-                    shape = RoundedCornerShape(12.dp)
+                Button(
+                    onClick = { isInserting = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                    modifier = Modifier.fillMaxWidth().testTag("add_profile_fab")
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text("Configure Device Role", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(
-                                onClick = {
-                                    viewModel.btManager.startReceiverServer()
-                                    viewModel.triggerVibration(60, 200)
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (btRole == BluetoothRole.RECEIVER) themeColor else Color.DarkGray
-                                ),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("RECEIVER", color = Color.White, fontWeight = FontWeight.Bold)
-                                    Text("Dolphin Bridge Node", fontSize = 9.sp, color = Color.LightGray)
-                                }
-                            }
-
-                            Button(
-                                onClick = {
-                                    viewModel.btManager.startSenderMode()
-                                    viewModel.triggerVibration(60, 200)
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (btRole == BluetoothRole.SENDER) themeColor else Color.DarkGray
-                                ),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("SENDER", color = Color.White, fontWeight = FontWeight.Bold)
-                                    Text("Handheld Controller", fontSize = 9.sp, color = Color.LightGray)
-                                }
-                            }
-                        }
-
-                        if (btRole != BluetoothRole.IDLE) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Button(
-                                onClick = { viewModel.btManager.stopAll() },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.buttonColors(containerColor = CrimsonRed)
-                            ) {
-                                Text("Disconnect Session", fontSize = 11.sp, color = Color.White)
-                            }
-                        }
-                    }
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Add Custom Configuration")
                 }
             }
+        }
 
-            // --- 1. Wii MotionPlus Precision Engine Card ---
-            item {
-                val calibActive by viewModel.motionPlusCalibrating.collectAsStateWithLifecycle()
-                val calibDone by viewModel.motionPlusCalibrated.collectAsStateWithLifecycle()
-                val sens by viewModel.motionPlusSensitivity.collectAsStateWithLifecycle()
-
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = LightSlate),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, tint = themeColor, modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Wii MotionPlus Precision Engine", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            "Simulates high-end gyroscope & acceleration sensors for standard Wii Remote with MotionPlus extensions.",
-                            fontSize = 11.sp, color = Color.LightGray
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Calibration status indicator
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color.Black.copy(alpha = 0.3f))
-                                .padding(8.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(10.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (calibActive) Color.Yellow
-                                        else if (calibDone) Color.Green
-                                        else Color.Red
-                                    )
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (calibActive) "Calibrating standing drift... Place flat!"
-                                       else if (calibDone) "MotionPlus Gyro: Active & Balanced"
-                                       else "MotionPlus Gyro: Uncalibrated (Standing Drift)",
-                                fontSize = 11.sp,
-                                color = Color.White,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(
-                                onClick = { viewModel.calibrateMotionPlus() },
-                                colors = ButtonDefaults.buttonColors(containerColor = if (calibActive) Color.DarkGray else themeColor),
-                                enabled = !calibActive,
-                                modifier = Modifier.weight(1.3f).height(40.dp)
-                            ) {
-                                Text(if (calibActive) "Calibrating..." else "Calibrate", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            }
-
-                            // Sensitivity controls
-                            Row(
-                                modifier = Modifier
-                                    .weight(2f)
-                                    .height(40.dp)
-                                    .border(1.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(20.dp))
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(Color.Black.copy(alpha = 0.15f)),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceEvenly
-                            ) {
-                                listOf(0.5f, 1.0f, 2.0f).forEach { sRate ->
-                                    val isSelected = sens == sRate
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxHeight()
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(20.dp))
-                                            .background(if (isSelected) themeColor else Color.Transparent)
-                                            .clickable { viewModel.motionPlusSensitivity.value = sRate }
-                                            .padding(horizontal = 4.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = when(sRate) {
-                                                0.5f -> "Slow"
-                                                1.0f -> "Mid"
-                                                else -> "Fast"
-                                            },
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isSelected) Color.White else Color.LightGray
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // --- 2. Dolphin Android Emulator Launcher Card ---
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = LightSlate),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Send, contentDescription = null, tint = themeColor, modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Dolphin Integration Launcher", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            "Directly launch the Dolphin Emulator app installed on this Android device to quickly configure or play games.",
-                            fontSize = 11.sp, color = Color.LightGray
-                        )
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        Button(
-                            onClick = {
-                                val ok = viewModel.launchDolphinApp(context)
-                                if (!ok) {
-                                    android.widget.Toast.makeText(context, "Dolphin Emulator app not found on this device.", android.widget.Toast.LENGTH_LONG).show()
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                            modifier = Modifier.fillMaxWidth().height(42.dp)
-                        ) {
-                            Text("LAUNCH DOLPHIN EMULATOR", letterSpacing = 0.5.sp, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
-                        }
-                    }
-                }
-            }
-
-            // --- 3. Active Multi-player Slots visualizer ---
-            item {
-                val slotList by viewModel.btManager.connectedClientsList.collectAsStateWithLifecycle()
-                
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = LightSlate),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.AccountBox, contentDescription = null, tint = themeColor, modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Active Wii Mote Slots (Multiplayer)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            "Connect multiple sender devices. The receiver bridge automatically assigns them to active emulator player slots.",
-                            fontSize = 11.sp, color = Color.LightGray
-                        )
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            for (slotIdx in 0..3) {
-                                val assignedName = slotList.find { it.startsWith("Slot ${slotIdx + 1}:") }
-                                val isOccupied = assignedName != null || (slotIdx == 0 && btRole != BluetoothRole.RECEIVER)
-                                val pColor = if (isOccupied) themeColor else Color.DarkGray
-                                
-                                Column(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color.Black.copy(alpha = 0.3f))
-                                        .border(1.dp, pColor.copy(alpha = if (isOccupied) 1.0f else 0.5f), RoundedCornerShape(8.dp))
-                                        .padding(vertical = 8.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(8.dp)
-                                            .clip(CircleShape)
-                                            .background(if (isOccupied) Color.Green else Color.Gray)
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "Player P${slotIdx + 1}",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isOccupied) Color.White else Color.Gray
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = if (isOccupied) {
-                                            if (slotIdx == 0 && btRole != BluetoothRole.RECEIVER) "Local Host"
-                                            else assignedName?.substringAfter(":")?.trim()?.take(7) ?: "Active"
-                                        } else "Offline",
-                                        fontSize = 8.sp,
-                                        color = if (isOccupied) themeColor else Color.DarkGray,
-                                        maxLines = 1
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (btState != BtConnectionState.NONE) {
-                item {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = LightSlate),
+        items(profiles) { profile ->
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardDark),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(
+                        width = 1.dp,
+                        color = if (profile.isBuiltIn) ElectricBlue.copy(alpha = 0.5f) else SoftGrey.copy(alpha = 0.2f),
                         shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Text("Bluetooth Link Telemetry", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                TelemetryBox("State", btState.name, if (btState == BtConnectionState.CONNECTED) Color.Green else Color.Yellow)
-                                TelemetryBox("Throughput", "$btFps Hz", themeColor)
-                                TelemetryBox("Bytes Shared", "$bytesProcessed B", Color.LightGray)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (btRole == BluetoothRole.RECEIVER) {
-                item {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = LightSlate.copy(alpha = 0.5f)),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Text("Receiver Active", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                "Server is listening. Make sure the other device is configured as SENDER and connects to this device. Ensure local DSU Server is also started so incoming Bluetooth inputs are piped to your computer.",
-                                fontSize = 12.sp, color = Color.LightGray
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (btRole == BluetoothRole.SENDER) {
-                item {
-                    Text("Select Paired Device to Transmit To", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                }
-
-                if (pairedDevices.isEmpty()) {
-                    item {
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = LightSlate.copy(alpha = 0.4f)),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Box(modifier = Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("No Paired Devices Found", color = Color.Gray, fontWeight = FontWeight.Bold)
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text("Pair both phones in Android Bluetooth Settings first, then re-open this tab.", color = Color.DarkGray, fontSize = 11.sp, textAlign = TextAlign.Center)
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    items(pairedDevices) { device ->
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = LightSlate.copy(alpha = 0.7f)),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    viewModel.btManager.connectAsSender(device)
-                                    viewModel.triggerVibration(40, 100)
-                                }
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(14.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = themeColor, modifier = Modifier.size(24.dp))
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column {
-                                        @SuppressLint("MissingPermission")
-                                        val dName = device.name ?: "Unnamed Device"
-                                        Text(dName, color = Color.White, fontWeight = FontWeight.Bold)
-                                        Text(device.address, color = Color.Gray, fontSize = 11.sp)
-                                    }
-                                }
-                                Icon(Icons.Default.Share, contentDescription = "Connect", tint = Color.LightGray)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun CustomizerTab(viewModel: WiiControllerViewModel, themeColor: Color) {
-    val preset by viewModel.layoutPreset.collectAsStateWithLifecycle()
-    val scale by viewModel.buttonScale.collectAsStateWithLifecycle()
-    val themeColorName by viewModel.themeColor.collectAsStateWithLifecycle()
-    val mappings by viewModel.buttonMappings.collectAsStateWithLifecycle()
-
-    var showMappingDropdownFor by remember { mutableStateOf<String?>(null) }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = LightSlate),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text("Controller Theme Mode", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    val themesList = listOf("Wii Blue", "Carbon Grey", "Nintendo Red", "Teal Fusion")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        themesList.forEach { th ->
-                            val isSelected = th == themeColorName
-                            Button(
-                                onClick = { viewModel.themeColor.value = th },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isSelected) themeColor else Color.DarkGray
-                                ),
-                                contentPadding = PaddingValues(horizontal = 8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(th.split(" ").first(), fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Controller Layout Orientation", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    val layoutsList = listOf("Classic Wii", "Horizontal Gamepad", "Big Buttons")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        layoutsList.forEach { lay ->
-                            val isSelected = lay == preset
-                            Button(
-                                onClick = { viewModel.layoutPreset.value = lay },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isSelected) themeColor else Color.DarkGray
-                                ),
-                                contentPadding = PaddingValues(horizontal = 4.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(lay, fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Tactile Button Size: ${scale}x", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Slider(
-                        value = scale,
-                        onValueChange = { viewModel.buttonScale.value = (Math.round(it * 10f) / 10f).coerceIn(0.8f, 1.5f) },
-                        valueRange = 0.8f..1.5f,
-                        steps = 6,
-                        colors = SliderDefaults.colors(
-                            thumbColor = themeColor,
-                            activeTrackColor = themeColor
-                        )
                     )
-                }
-            }
-        }
-
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = LightSlate),
-                shape = RoundedCornerShape(12.dp)
             ) {
-                Column(modifier = Modifier.padding(14.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
-                            Text("Button Remapping Engine", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            Text("Map dynamic targets for each physical button", fontSize = 11.sp, color = Color.Gray)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = profile.name,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = Color.White
+                            )
+                            if (profile.isBuiltIn) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Box(modifier = Modifier.background(ElectricBlue.copy(alpha = 0.2f), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 2.dp)) {
+                                    Text("Preset", fontSize = 8.sp, color = ElectricBlue, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
-                        TextButton(
-                            onClick = { viewModel.resetButtonMappings() },
-                            colors = ButtonDefaults.textButtonColors(contentColor = themeColor)
-                        ) {
-                            Text("RESET MAPPINGS", fontSize = 9.sp)
+                        if (!profile.isBuiltIn) {
+                            IconButton(onClick = { viewModel.deleteProfile(profile.name) }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Remove setting", tint = ErrorCrimson)
+                            }
                         }
                     }
-                    Spacer(modifier = Modifier.height(14.dp))
 
-                    val keys = listOf("A", "B", "MINUS", "PLUS", "HOME", "ONE", "TWO", "UP", "DOWN", "LEFT", "RIGHT")
-                    val targets = listOf("A", "B", "MINUS", "PLUS", "HOME", "ONE", "TWO", "UP", "DOWN", "LEFT", "RIGHT", "SHAKE")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "SensX (Axis X): ${profile.sensX}× | Stick Deadzone: ${String.format("%.0f%%", profile.deadzone * 100f)} | ShakeG: ${profile.shakeThreshold}G",
+                        fontSize = 11.sp,
+                        color = SoftGrey
+                    )
 
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        keys.forEach { srcKey ->
-                            val currentTgt = mappings[srcKey] ?: srcKey
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(SlateBackground)
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .clip(CircleShape)
-                                            .background(themeColor),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(srcKey.take(2), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Button $srcKey", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                                }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = { viewModel.applyProfile(profile) },
+                        colors = ButtonDefaults.buttonColors(containerColor = if (profile.isBuiltIn) ElectricBlue else Color.DarkGray),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Apply Calibration Setup", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
 
-                                Box {
-                                    Button(
-                                        onClick = { showMappingDropdownFor = srcKey },
-                                        colors = ButtonDefaults.buttonColors(containerColor = LightSlate),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                        modifier = Modifier.height(28.dp)
-                                    ) {
-                                        Text("➔ Target: $currentTgt", fontSize = 10.sp, color = Color.White)
-                                    }
+@Composable
+fun SettingsTab(viewModel: WiiControllerViewModel) {
+    val context = LocalContext.current
+    var expandedSection by remember { mutableStateOf(-1) } // 0=DSU Server, 1=Sensor Controls, 2=Audio Speaker, 3=Bluetooth Sync, 4=Setup Onboarding, 5=Diagnostics Vault
 
-                                    DropdownMenu(
-                                        expanded = showMappingDropdownFor == srcKey,
-                                        onDismissRequest = { showMappingDropdownFor = null },
-                                        modifier = Modifier.background(LightSlate)
-                                    ) {
-                                        targets.forEach { target ->
-                                            DropdownMenuItem(
-                                                text = { Text(target, color = Color.White, fontSize = 12.sp) },
-                                                onClick = {
-                                                    viewModel.updateButtonMapping(srcKey, target)
-                                                    showMappingDropdownFor = null
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
+    Text(
+        text = "Wii Mote Settings",
+        fontSize = 24.sp,
+        fontWeight = FontWeight.Bold,
+        color = Color.White,
+        modifier = Modifier.padding(16.dp).statusBarsPadding()
+    )
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("settings_tab_root"),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // SECTION 1: DSU SERVER & LOCAL NETWORKING
+        item {
+            ConfigHeaderItem(
+                title = "DSU Server & Networking Connection",
+                subtitle = "Manage ports, DSU server, IP metrics and DNS states",
+                id = 0,
+                expandedId = expandedSection
+            ) { expandedSection = if (expandedSection == 0) -1 else 0 }
+            
+            if (expandedSection == 0) {
+                DsuServerConfigBlock(viewModel)
+            }
+        }
+
+        // SECTION 2: PHYSICAL GYRO ACCELEROMETER CONTROLS
+        item {
+            ConfigHeaderItem(
+                title = "Live Motion & Sensor Controls",
+                subtitle = "Smoothness, per-axis multipliers, shake parameters",
+                id = 1,
+                expandedId = expandedSection
+            ) { expandedSection = if (expandedSection == 1) -1 else 1 }
+
+            if (expandedSection == 1) {
+                SensorConfigBlock(viewModel)
+            }
+        }
+
+        // SECTION 3: AUDIO RECEIVER SPEAKER
+        item {
+            ConfigHeaderItem(
+                title = "Wii Controller Speaker Audio",
+                subtitle = "Jitter buffers, volume multipliers, wave audio visualization",
+                id = 2,
+                expandedId = expandedSection
+            ) { expandedSection = if (expandedSection == 2) -1 else 2 }
+
+            if (expandedSection == 2) {
+                AudioConfigBlock(viewModel)
+            }
+        }
+
+        // SECTION 4: BLUETOOTH MULTIPLAYER INTERACTION
+        item {
+            ConfigHeaderItem(
+                title = "Multiplayer Bluetooth Hub",
+                subtitle = "Sync several phones classic sockets for four player splits",
+                id = 3,
+                expandedId = expandedSection
+            ) { expandedSection = if (expandedSection == 3) -1 else 3 }
+
+            if (expandedSection == 3) {
+                BluetoothConfigBlock(viewModel)
+            }
+        }
+
+        // SECTION 5: dolphin setup onboarding guide
+        item {
+            ConfigHeaderItem(
+                title = "Setup Onboarding Wizard",
+                subtitle = "Step-by-step controller mapping steps",
+                id = 4,
+                expandedId = expandedSection
+            ) { expandedSection = if (expandedSection == 4) -1 else 4 }
+
+            if (expandedSection == 4) {
+                SetupWizardConfigBlock(viewModel)
+            }
+        }
+
+        // SECTION 6: CRASH LOGGER REPORT
+        item {
+            ConfigHeaderItem(
+                title = "Crash Logger Vault Diagnostics",
+                subtitle = "Last unhandled stack traces and recovery audits",
+                id = 5,
+                expandedId = expandedSection
+            ) { expandedSection = if (expandedSection == 5) -1 else 5 }
+
+            if (expandedSection == 5) {
+                CrashDiagnosticsConfigBlock(viewModel)
+            }
+        }
+    }
+}
+
+@Composable
+fun ConfigHeaderItem(title: String, subtitle: String, id: Int, expandedId: Int, onToggle: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = CardDark),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle() }
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1.getFloat())) {
+                Text(title, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(subtitle, fontSize = 11.sp, color = SoftGrey)
+            }
+            Icon(
+                imageVector = if (expandedId == id) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = null,
+                tint = ElectricBlue
+            )
+        }
+    }
+}
+
+fun Int.getFloat(): Float = this.toFloat()
+
+@Composable
+fun DsuServerConfigBlock(viewModel: WiiControllerViewModel) {
+    val isRunning by viewModel.isDsuRunning.collectAsStateWithLifecycle()
+    val isNsd by viewModel.isNsdDiscoverable.collectAsStateWithLifecycle()
+    val clients by viewModel.registeredClients.collectAsStateWithLifecycle()
+    val fps by viewModel.dsuFps.collectAsStateWithLifecycle()
+    val ipAddr by viewModel.ipAddress.collectAsStateWithLifecycle()
+
+    var customDsuPort by remember { mutableStateOf("26760") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(CardDark.copy(alpha = 0.5f), RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("DSU Endpoint Host: $ipAddr (Wildcard binds ::)", color = ActiveGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+
+        OutlinedTextField(
+            value = customDsuPort,
+            onValueChange = { customDsuPort = it },
+            label = { Text("UDP Handshake socket port") },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White,
+                focusedLabelColor = ElectricBlue,
+                unfocusedBorderColor = SoftGrey
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Cemuhook mDNS Advertising", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("Broadcasts UDP endpoint to Dolphin instantly", fontSize = 10.sp, color = SoftGrey)
+            }
+            Switch(checked = isNsd, onCheckedChange = { viewModel.setNsdEnabled(it) })
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+        Button(
+            onClick = {
+                val pInt = customDsuPort.toIntOrNull() ?: 26760
+                if (isRunning) {
+                    viewModel.stopDsuServer()
+                } else {
+                    viewModel.startDsuServer(pInt)
+                }
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = if (isRunning) ErrorCrimson else ElectricBlue),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (isRunning) "STOP DSU SERVER" else "RUN DSU BACKGROUND INSTANCE")
+        }
+
+        if (isRunning) {
+            Card(colors = CardDefaults.cardColors(containerColor = ConsoleDark), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Live Broadcaster Metrics:", color = ElectricBlue, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    Text("Broadcast Stream FPS: $fps Hz (Adaptive throttled)", fontSize = 11.sp, color = Color.White)
+                    Text("Subscriber Subscriber Slots: ${clients.size}/4 IP Clients", fontSize = 11.sp, color = Color.White)
+                    if (clients.isNotEmpty()) {
+                        clients.forEach {
+                            Text(" ➔ Subscriber Client ID: $it", fontSize = 10.sp, color = ActiveGreen)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SensorConfigBlock(viewModel: WiiControllerViewModel) {
+    val perAxis by viewModel.perAxisMode.collectAsStateWithLifecycle()
+    val sX by viewModel.sensX.collectAsStateWithLifecycle()
+    val sY by viewModel.sensY.collectAsStateWithLifecycle()
+    val sZ by viewModel.sensZ.collectAsStateWithLifecycle()
+    val smoothing by viewModel.motionSmoothing.collectAsStateWithLifecycle()
+    val dz by viewModel.analogDeadzone.collectAsStateWithLifecycle()
+    val st by viewModel.shakeThreshold.collectAsStateWithLifecycle()
+    val testShakeState by viewModel.isShakeTestDetected.collectAsStateWithLifecycle()
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(CardDark.copy(alpha = 0.5f), RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Per-Axis Sensitivity Mode", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("Customize sensitivity modifiers uniquely on axes", fontSize = 10.sp, color = SoftGrey)
+            }
+            Switch(checked = perAxis, onCheckedChange = { viewModel.perAxisMode.value = it })
+        }
+
+        if (perAxis) {
+            Column {
+                Text("Gyro sensitivity multiplier X: ${String.format("%.1f×", sX)}", fontSize = 11.sp, color = Color.White)
+                Slider(value = sX, onValueChange = { viewModel.sensX.value = it }, valueRange = 0.2f..3.0f)
+
+                Text("Gyro sensitivity multiplier Y: ${String.format("%.1f×", sY)}", fontSize = 11.sp, color = Color.White)
+                Slider(value = sY, onValueChange = { viewModel.sensY.value = it }, valueRange = 0.2f..3.0f)
+
+                Text("Gyro sensitivity multiplier Z: ${String.format("%.1f×", sZ)}", fontSize = 11.sp, color = Color.White)
+                Slider(value = sZ, onValueChange = { viewModel.sensZ.value = it }, valueRange = 0.2f..3.0f)
+            }
+        } else {
+            Column {
+                Text("Universal Gyro Sensitivity: ${String.format("%.1f×", sX)}", fontSize = 11.sp, color = Color.White)
+                Slider(
+                    value = sX,
+                    onValueChange = {
+                        viewModel.sensX.value = it
+                        viewModel.sensY.value = it
+                        viewModel.sensZ.value = it
+                    },
+                    valueRange = 0.2f..3.0f
+                )
+            }
+        }
+
+        Column {
+            Text("Motion Smoothing filter (LPF coefficient): ${String.format("%.0f%%", smoothing * 100f)}", fontSize = 11.sp, color = Color.White)
+            Slider(value = smoothing, onValueChange = { viewModel.motionSmoothing.value = it }, valueRange = 0.1f..1.0f)
+        }
+
+        Column {
+            Text("Stick Deadzone: ${String.format("%.0f%%", dz * 100f)}", fontSize = 11.sp, color = Color.White)
+            Slider(value = dz, onValueChange = { viewModel.analogDeadzone.value = it }, valueRange = 0.0f..0.20f)
+        }
+
+        Column {
+            Text("Shake detection trigger sensitivity: ${String.format("%.1f G", st)}", fontSize = 11.sp, color = Color.White)
+            Slider(value = st, onValueChange = { viewModel.shakeThreshold.value = it }, valueRange = 0.5f..3.0f)
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .background(if (testShakeState) ActiveGreen else CardDark, shape = RoundedCornerShape(8.dp))
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (testShakeState) "SHAKE DETECTED!" else "Test Shake",
+                    color = if (testShakeState) ConsoleDark else Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+            }
+
+            Button(
+                onClick = { viewModel.calibrateMotionPlus() },
+                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Recalibrate Sensor", fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+@Composable
+fun AudioConfigBlock(viewModel: WiiControllerViewModel) {
+    val isRunning by viewModel.isAudioRunning.collectAsStateWithLifecycle()
+    val trackingBytes by viewModel.audioBytesReceived.collectAsStateWithLifecycle()
+    val status by viewModel.audioStatusString.collectAsStateWithLifecycle()
+    val waveState by viewModel.audioWaveform.collectAsStateWithLifecycle()
+    val vol by viewModel.currentVolume.collectAsStateWithLifecycle()
+
+    var audioPortInput by remember { mutableStateOf("26761") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(CardDark.copy(alpha = 0.5f), RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        OutlinedTextField(
+            value = audioPortInput,
+            onValueChange = { audioPortInput = it },
+            label = { Text("Audio UDP broadcast port") },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White,
+                focusedBorderColor = ElectricBlue
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Audio Stream Volume: ${vol.toInt()}%", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("Asymmetric audio amplifier multiplier scale", fontSize = 10.sp, color = SoftGrey)
+            }
+        }
+        Slider(value = vol, onValueChange = { viewModel.currentVolume.value = it }, valueRange = 0f..150f)
+
+        Button(
+            onClick = {
+                val pInt = audioPortInput.toIntOrNull() ?: 26761
+                viewModel.toggleAudioServer(pInt)
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = if (isRunning) ErrorCrimson else ElectricBlue),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (isRunning) "STOP AUDIO STREAM SPEAKER" else "INITIALIZE AUDIO RECEIVE STREAM")
+        }
+
+        if (isRunning) {
+            Card(colors = CardDefaults.cardColors(containerColor = ConsoleDark), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Active Speaker Stream Diagnostic Details:", color = ElectricBlue, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    Text("Stream State: $status", fontSize = 11.sp, color = Color.White)
+                    Text("Received sound chunks: ${trackingBytes / 1024L} KB", fontSize = 11.sp, color = Color.White)
+
+                    Text("Oscilloscope Audios Waveform Visuals:", color = SoftGrey, fontSize = 10.sp)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .background(CardDark, RoundedCornerShape(4.dp))
+                    ) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val w = size.width
+                            val h = size.height
+                            val step = w / waveState.size.getFloat()
+                            
+                            for (i in 0 until waveState.size - 1) {
+                                val sX = i.getFloat() * step
+                                val sY = h / 2f + (waveState[i] * (h / 2f))
+                                val eX = (i + 1).getFloat() * step
+                                val eY = h / 2f + (waveState[i + 1] * (h / 2f))
+
+                                drawLine(
+                                    color = ElectricBlue,
+                                    start = Offset(sX, sY),
+                                    end = Offset(eX, eY),
+                                    strokeWidth = 2f
+                                )
                             }
                         }
                     }
@@ -1761,82 +1161,207 @@ fun CustomizerTab(viewModel: WiiControllerViewModel, themeColor: Color) {
     }
 }
 
+@SuppressLint("MissingPermission")
 @Composable
-fun InstructionTab(themeColor: Color) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = LightSlate),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "Plug & Play: Connecting to Dolphin",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = themeColor
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
+fun BluetoothConfigBlock(viewModel: WiiControllerViewModel) {
+    val btState by viewModel.btConnectionState.collectAsStateWithLifecycle()
+    val btRole by viewModel.btRole.collectAsStateWithLifecycle()
+    val connectedName by viewModel.btDeviceName.collectAsStateWithLifecycle()
+    val clientsList by viewModel.btClientsList.collectAsStateWithLifecycle()
+    val reconnectAttempt by viewModel.reconnectAttempt.collectAsStateWithLifecycle()
+    val isReconnecting by viewModel.isReconnecting.collectAsStateWithLifecycle()
 
-                    GuideStep("1", "Check Wireless LAN Environment", "Ensure both your Android device and the emulator host computer (PC/Mac/Linux) are on the exact same Wi-Fi subnet.")
-                    GuideStep("2", "Start DSU input Server", "Tap 'Start DSU' on the 'Server Hub' Tab. Note your phone's Wi-Fi IP address shown in the status bar (e.g., 192.168.1.10).")
-                    GuideStep("3", "Configure Dolphin Alternate Inputs", "Open Dolphin. Go to Options -> Controller Settings -> under 'Wii Remotes' choose 'Emulated Wii Remote' -> Click 'Configure' -> Click 'Alternate Input Sources' checkbox -> Enable -> Add Server and write your Phone's Wi-Fi IP. Press OK.")
-                    GuideStep("4", "Map Controls & Calibrate Motion", "In Dolphin Controller mapping settings, choose 'DSU/0/Wii' as your active input device. Map your keys (A, B, D-pad, 1, 2). Under Motion Input, mapping layout will pick up accelerometer and gyroscope values dynamically from the continuous DSU stream!")
-                    GuideStep("5", "Enable Real-time Speaker sound effects", "Deploy the 'dolphin_wiimote_sound_streamer.py' python script on your computer. Run:\n`python dolphin_wiimote_sound_streamer.py --ip YOUR_PHONE_IP` to route retro sound effects smoothly.")
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val service = viewModel.isServiceBound.collectAsStateWithLifecycle()
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(CardDark.copy(alpha = 0.5f), RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Multiplayer Classic RFCOMM Sync", color = ElectricBlue, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    viewModel.btManager.startReceiverServer()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = if (btRole == BluetoothRole.RECEIVER) ActiveGreen else Color.DarkGray),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("HOST BRIDGE", fontSize = 10.sp)
+            }
+
+            Button(
+                onClick = {
+                    viewModel.btManager.startSenderMode()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = if (btRole == BluetoothRole.SENDER) ActiveGreen else Color.DarkGray),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("ACT AS CLIENT", fontSize = 10.sp)
+            }
+        }
+
+        if (isReconnecting) {
+            Box(modifier = Modifier.fillMaxWidth().background(ErrorCrimson.copy(alpha = 0.2f), RoundedCornerShape(8.dp)).padding(8.dp)) {
+                Text("Reconnecting to host Remote Receiver... (Attempt $reconnectAttempt/10)", fontSize = 11.sp, color = ErrorCrimson, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        if (btRole == BluetoothRole.RECEIVER) {
+            Card(colors = CardDefaults.cardColors(containerColor = ConsoleDark), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Local QR pairing code MAC metadata info string:", color = SoftGrey, fontSize = 11.sp)
+                    val wifiMac = "02:00:00:00:00:00"
+                    val uuid = "1f8bd4b2-0382-4aa8-a53b-fde5bc63ee28"
+                    val syncUrl = "wiibt://$wifiMac/$uuid"
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            clipboard.setText(AnnotatedString(syncUrl))
+                            Toast.makeText(context, "Copied connection metadata URL!", Toast.LENGTH_SHORT).show()
+                        },
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null, tint = ElectricBlue, modifier = Modifier.size(16.dp))
+                        Text(syncUrl, fontSize = 11.sp, color = ElectricBlue)
+                    }
+
+                    Text("Active Multiplayer Player Slots (Limit 3 Client Senders):", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    Text("Slot P1: (LOCAL PHYSICAL PHONE)", fontSize = 11.sp, color = ActiveGreen)
+                    for (slot in 2..4) {
+                        val cConnected = clientsList.find { it.contains("Slot $slot") }
+                        if (cConnected != null) {
+                            Text(cConnected, fontSize = 11.sp, color = ActiveGreen)
+                        } else {
+                            Text("Slot P$slot: [Empty, awaiting client Bluetooth connection]", fontSize = 11.sp, color = SoftGrey)
+                        }
+                    }
                 }
             }
         }
 
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = LightSlate),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "Bluetooth Pairing & Bridgeless setup",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = themeColor
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    GuideStep("A", "System Bluetooth Pairing", "Pair Phone A and Phone B together in System Bluetooth Settings first of your Android devices.")
-                    GuideStep("B", "Receiver Phone (Bridge Gateway)", "Start the DSU Server and speaker servers on Phone B. Switch Phone B to RECEIVER role on the Bluetooth Sync tab.")
-                    GuideStep("C", "Sender Phone (Handheld)", "Switch Phone A to SENDER role on the Bluetooth Sync tab. Select Phone B from paired list. It will connect and stream motions/button state instantly.")
-                    GuideStep("D", "Launch Emulator!", "Now, hold Phone A in your hand to aim, shake, or play games, while Phone B reports data seamlessly to your PC over local Wi-Fi. This creates an ultra-reliable connection that doesn't trigger Wi-Fi telemetry packet drops!")
+        if (btRole == BluetoothRole.SENDER) {
+            Text("Select HOST to bind and transmit inputs to:", fontSize = 12.sp, color = Color.White)
+            val devList = viewModel.btManager.pairedDevices.collectAsStateWithLifecycle().value
+            if (devList.isEmpty()) {
+                Text("No bonded classic devices. Bond from system settings first.", fontSize = 11.sp, color = ErrorCrimson)
+            } else {
+                LazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
+                    items(devList) { dev ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.btManager.connectAsSender(dev) }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(dev.name ?: "Bonded Bluetooth Dev", fontSize = 12.sp, color = Color.White)
+                            Text("TAP TO SYNC", fontSize = 10.sp, color = ElectricBlue)
+                        }
+                    }
                 }
+            }
+        }
+
+        Button(
+            onClick = { viewModel.btManager.stopAll() },
+            colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("STOP ALL BLUETOOTH")
+        }
+    }
+}
+
+@Composable
+fun SetupWizardConfigBlock(viewModel: WiiControllerViewModel) {
+    var stepIndex by remember { mutableStateOf(0) }
+    val details = listOf(
+        "Open Dolphin on your computer. Access Controllers settings under Configuration options.",
+        "Add an alternate source controller on Slot 1. Pick 'Alternative Source Input' or select DSU Client.",
+        "Enter DSU host IP address ${viewModel.ipAddress.collectAsStateWithLifecycle().value} with port 26760 manually, then click test connect.",
+        "That's it! Your physical android sensors will translate seamlessly to Wii Motion Plus pointers in Dolphin!"
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(CardDark.copy(alpha = 0.5f), RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("Wii Link Setup Assistant (Step ${stepIndex + 1}/4)", color = ActiveGreen, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(ConsoleDark, RoundedCornerShape(8.dp))
+                .padding(12.dp)
+        ) {
+            Text(details[stepIndex], fontSize = 12.sp, color = Color.White)
+        }
+
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(
+                onClick = { if (stepIndex > 0) stepIndex-- },
+                enabled = stepIndex > 0
+            ) {
+                Text("Previous")
+            }
+
+            TextButton(
+                onClick = { if (stepIndex < 3) stepIndex++ },
+                enabled = stepIndex < 3
+            ) {
+                Text("Next Step")
             }
         }
     }
 }
 
 @Composable
-fun GuideStep(step: String, title: String, description: String) {
-    Row(
+fun CrashDiagnosticsConfigBlock(viewModel: WiiControllerViewModel) {
+    val logs by viewModel.crashReports.collectAsStateWithLifecycle()
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp)
+            .background(CardDark.copy(alpha = 0.5f), RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(24.dp)
-                .clip(CircleShape)
-                .background(WiiBlue),
-            contentAlignment = Alignment.Center
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(step, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("Collected Crash Stack Diagnostics (${logs.size} reports):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            IconButton(onClick = { viewModel.clearCrashReports() }) {
+                Icon(Icons.Default.Delete, contentDescription = "Wipe stack logs", tint = ErrorCrimson)
+            }
         }
-        Spacer(modifier = Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(description, color = Color.LightGray, fontSize = 12.sp, lineHeight = 16.sp)
+
+        if (logs.isEmpty()) {
+            Text("No crashes logged yet. Running perfectly!", color = ActiveGreen, fontSize = 11.sp)
+        } else {
+            LazyColumn(modifier = Modifier.heightIn(max = 140.dp)) {
+                items(logs) { log ->
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = ConsoleDark),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Text(log.exceptionMessage, color = ErrorCrimson, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            Text("Timestamp: ${log.timestamp}", color = SoftGrey, fontSize = 9.sp)
+                        }
+                    }
+                }
+            }
         }
     }
 }

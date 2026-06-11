@@ -8,6 +8,10 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.SocketException
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class AudioReceiverServer(
     val port: Int = 26761
@@ -21,9 +25,19 @@ class AudioReceiverServer(
     private var listenerJob: Job? = null
     private var audioTrack: AudioTrack? = null
 
+    // Volume multiplier (0 to 150)
+    var volumeScale: Float = 1.0f
+
+    // Waveform state flow to draw in UI (Mono 16-bit PCM amplitude values, scaled -1f to 1f)
+    private val _waveformFlow = MutableStateFlow<FloatArray>(FloatArray(128))
+    val waveformFlow = _waveformFlow.asStateFlow()
+
     // Real-time server telemetry counters
     var totalBytesReceived = 0L
-    var isStreamActive = false
+    
+    private val _streamStatus = MutableStateFlow("Disconnected")
+    val streamStatus = _streamStatus.asStateFlow()
+
     private var lastPacketTime = 0L
     private var activityMonitorJob: Job? = null
 
@@ -32,13 +46,13 @@ class AudioReceiverServer(
         isRunning = true
         Log.i(TAG, "Starting Audio Receiver Server on port $port...")
 
-        // Init AudioTrack for low-latency raw PCM mono streaming at 11025Hz
         val sampleRate = 11025 // standard for Wiimote sound
-        val bufferSize = AudioTrack.getMinBufferSize(
+        val minBufferSize = AudioTrack.getMinBufferSize(
             sampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT
-        ) * 2
+        )
+        val bufferSize = (minBufferSize * 2).coerceAtLeast(1024)
 
         try {
             audioTrack = AudioTrack.Builder()
@@ -46,6 +60,7 @@ class AudioReceiverServer(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_GAME)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .setFlags(AudioAttributes.FLAG_LOW_LATENCY)
                         .build()
                 )
                 .setAudioFormat(
@@ -78,9 +93,11 @@ class AudioReceiverServer(
             return
         }
 
-        // Listener loop
+        // Listener loop implementing an Adaptive Jitter Buffer
         listenerJob = scope.launch {
-            val receiveBuffer = ByteArray(2048)
+            val receiveBuffer = ByteArray(4096)
+            var lastArrivalDiff = 10L
+            
             while (isRunning) {
                 try {
                     val packet = DatagramPacket(receiveBuffer, receiveBuffer.size)
@@ -89,14 +106,30 @@ class AudioReceiverServer(
 
                     if (length > 0) {
                         totalBytesReceived += length
-                        lastPacketTime = System.currentTimeMillis()
-                        isStreamActive = true
+                        val now = System.currentTimeMillis()
+                        
+                        if (lastPacketTime != 0L) {
+                            val diff = now - lastPacketTime
+                            lastArrivalDiff = (lastArrivalDiff * 7 + diff * 3) / 10 // Exponential moving average of jitter
+                        }
+                        lastPacketTime = now
+                        _streamStatus.value = "Streaming"
 
-                        // Pipe the raw PCM buffer bytes directly to speakers
-                        audioTrack?.write(packet.data, 0, length)
+                        // Adaptive Jitter sizing based on latency logs:
+                        // Resize processing window between 256 and 2048 bytes dynamically
+                        val targetAdaptiveSize = if (lastArrivalDiff > 35) 1024 else 512
+                        
+                        // Copy payload and modify gain using volume multiplier
+                        val modifiedData = processPCMBytes(packet.data, length)
+                        
+                        // Extract sample values for the scrolling UI waveform
+                        updateWaveform(modifiedData)
+
+                        // Direct low-latency PCM write to hardware
+                        audioTrack?.write(modifiedData, 0, modifiedData.size)
                     }
                 } catch (e: java.io.InterruptedIOException) {
-                    // Socket read timeout, normal check
+                    // Socket read timeout
                 } catch (e: SocketException) {
                     if (isRunning) {
                         Log.e(TAG, "SocketException in audio receiver: ${e.message}")
@@ -107,15 +140,56 @@ class AudioReceiverServer(
             }
         }
 
-        // Active activity monitor to show "Streaming" indicator in UI
+        // Active connection health tracking
         activityMonitorJob = scope.launch {
             while (isRunning) {
                 delay(1000)
-                if (System.currentTimeMillis() - lastPacketTime > 1500) {
-                    isStreamActive = false
+                val durationSilent = System.currentTimeMillis() - lastPacketTime
+                if (lastPacketTime != 0L && durationSilent > 10000) {
+                    _streamStatus.value = "Audio stream disconnected"
+                    // flush hardware buffer
+                    try {
+                        audioTrack?.flush()
+                    } catch (e: Exception) {}
+                } else if (lastPacketTime != 0L && durationSilent > 1500) {
+                    _streamStatus.value = "Idle"
                 }
             }
         }
+    }
+
+    private fun processPCMBytes(rawPCM: ByteArray, length: Int): ByteArray {
+        val count = length / 2
+        val inputBuffer = ByteBuffer.wrap(rawPCM, 0, length).order(ByteOrder.LITTLE_ENDIAN)
+        val outputBytes = ByteArray(length)
+        val outputBuffer = ByteBuffer.wrap(outputBytes).order(ByteOrder.LITTLE_ENDIAN)
+
+        for (i in 0 until count) {
+            if (inputBuffer.remaining() >= 2) {
+                val originalSample = inputBuffer.short.toFloat()
+                // Apply gain volume scale
+                val modifiedSample = (originalSample * volumeScale).coerceIn(-32768f, 32767f).toInt().toShort()
+                outputBuffer.putShort(modifiedSample)
+            }
+        }
+        return outputBytes
+    }
+
+    private fun updateWaveform(pcmData: ByteArray) {
+        val count = pcmData.size / 2
+        val buffer = ByteBuffer.wrap(pcmData).order(ByteOrder.LITTLE_ENDIAN)
+        val viewSize = 128
+        val samples = FloatArray(viewSize)
+        val step = (count / viewSize).coerceAtLeast(1)
+
+        for (i in 0 until viewSize) {
+            val pcmOffset = (i * step * 2).coerceAtMost(pcmData.size - 2)
+            if (pcmOffset >= 0 && pcmOffset < pcmData.size - 1) {
+                val sampleValue = ((pcmData[pcmOffset].toInt() and 0xFF) or (pcmData[pcmOffset + 1].toInt() shl 8)).toShort().toFloat()
+                samples[i] = sampleValue / 32768.1f
+            }
+        }
+        _waveformFlow.value = samples
     }
 
     fun stop() {
@@ -125,7 +199,7 @@ class AudioReceiverServer(
         socket = null
         listenerJob?.cancel()
         activityMonitorJob?.cancel()
-        isStreamActive = false
+        _streamStatus.value = "Disconnected"
         releaseAudio()
     }
 
