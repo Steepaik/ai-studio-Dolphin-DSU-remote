@@ -157,6 +157,14 @@ class BluetoothControllerManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
+    fun startSenderMode() {
+        stopAll()
+        _role.value = BluetoothRole.SENDER
+        _connectionState.value = BtConnectionState.NONE
+        refreshPairedDevices()
+    }
+
+    @SuppressLint("MissingPermission")
     fun connectAsSender(device: BluetoothDevice) {
         stopAll()
         _role.value = BluetoothRole.SENDER

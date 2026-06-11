@@ -1256,8 +1256,7 @@ fun BluetoothSyncTab(viewModel: WiiControllerViewModel, themeColor: Color) {
 
                             Button(
                                 onClick = {
-                                    viewModel.btManager.stopAll()
-                                    viewModel.btManager.refreshPairedDevices()
+                                    viewModel.btManager.startSenderMode()
                                     viewModel.triggerVibration(60, 200)
                                 },
                                 colors = ButtonDefaults.buttonColors(
