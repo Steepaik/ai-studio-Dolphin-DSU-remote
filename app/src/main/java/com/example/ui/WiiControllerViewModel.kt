@@ -106,41 +106,107 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
     private var senderShakeResetJob: Job? = null
     private var lastRumbleTime = 0L
 
+    // Wii MotionPlus variables
+    val motionPlusCalibrated = MutableStateFlow(false)
+    val motionPlusCalibrating = MutableStateFlow(false)
+    val motionPlusSensitivity = MutableStateFlow(1.0f) // Sensitivity multiplier: 0.5f (Slow), 1.0f (Standard), 2.0f (Fast)
+    
+    private var gyroBiasX = 0f
+    private var gyroBiasY = 0f
+    private var gyroBiasZ = 0f
+    private var lastRawGyro = Triple(0f, 0f, 0f)
+
+    fun calibrateMotionPlus() {
+        if (motionPlusCalibrating.value) return
+        viewModelScope.launch {
+            motionPlusCalibrating.value = true
+            motionPlusCalibrated.value = false
+            triggerVibration(100, 150)
+            
+            val samplesX = mutableListOf<Float>()
+            val samplesY = mutableListOf<Float>()
+            val samplesZ = mutableListOf<Float>()
+            
+            for (i in 0 until 15) {
+                samplesX.add(lastRawGyro.first)
+                samplesY.add(lastRawGyro.second)
+                samplesZ.add(lastRawGyro.third)
+                delay(100) // 1.5 seconds total calibration window
+            }
+            
+            if (samplesX.isNotEmpty()) {
+                gyroBiasX = samplesX.average().toFloat()
+                gyroBiasY = samplesY.average().toFloat()
+                gyroBiasZ = samplesZ.average().toFloat()
+            }
+            
+            motionPlusCalibrating.value = false
+            motionPlusCalibrated.value = true
+            triggerVibrationNotification()
+        }
+    }
+
+    fun launchDolphinApp(context: Context): Boolean {
+        listOf(
+            "org.dolphinemu.dolphinemu",
+            "org.dolphinemu.dolphinemu.debug",
+            "org.dolphinemu.dolphinemu.canary"
+        ).forEach { packageName ->
+            try {
+                val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+                if (intent != null) {
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                    return true
+                }
+            } catch (e: Exception) {
+                // Keep looking
+            }
+        }
+        return false
+    }
+
     init {
         refreshLocalIp()
 
-        // Sync incoming bluetooth packets on receiver to DSU server
+        // Sync incoming slotted bluetooth packets on receiver to DSU server
         viewModelScope.launch {
-            btManager.receivedState.collect { packed ->
-                if (packed != null && btManager.role.value == BluetoothRole.RECEIVER) {
-                    // Update telemetry flows so local charts visual reflect tilting
-                    _accelState.value = Triple(packed.accelX, packed.accelY, packed.accelZ)
-                    _gyroState.value = Triple(packed.gyroX, packed.gyroY, packed.gyroZ)
+            btManager.slottedReceivedState.collect { slotted ->
+                if (slotted != null && btManager.role.value == BluetoothRole.RECEIVER) {
+                    val packed = slotted.state
+                    val slotId = slotted.slotId
+                    
+                    if (slotId == 0) {
+                        _accelState.value = Triple(packed.accelX, packed.accelY, packed.accelZ)
+                        _gyroState.value = Triple(packed.gyroX, packed.gyroY, packed.gyroZ)
+                    }
 
-                    // Inject values to local DSU server
+                    // Inject values to local DSU server on the slotted index
                     dsuServer?.let { server ->
-                        server.accelX = packed.accelX
-                        server.accelY = packed.accelY
-                        server.accelZ = packed.accelZ
-                        server.gyroX = packed.gyroX
-                        server.gyroY = packed.gyroY
-                        server.gyroZ = packed.gyroZ
-
-                        server.buttonA = packed.isBtnPressed(BluetoothControllerManager.BTN_A)
-                        server.buttonB = packed.isBtnPressed(BluetoothControllerManager.BTN_B)
-                        server.buttonMinus = packed.isBtnPressed(BluetoothControllerManager.BTN_MINUS)
-                        server.buttonPlus = packed.isBtnPressed(BluetoothControllerManager.BTN_PLUS)
-                        server.buttonHome = packed.isBtnPressed(BluetoothControllerManager.BTN_HOME)
-                        server.button1 = packed.isBtnPressed(BluetoothControllerManager.BTN_1)
-                        server.button2 = packed.isBtnPressed(BluetoothControllerManager.BTN_2)
-                        server.buttonLeft = packed.isBtnPressed(BluetoothControllerManager.BTN_LEFT)
-                        server.buttonRight = packed.isBtnPressed(BluetoothControllerManager.BTN_RIGHT)
-                        server.buttonUp = packed.isBtnPressed(BluetoothControllerManager.BTN_UP)
-                        server.buttonDown = packed.isBtnPressed(BluetoothControllerManager.BTN_DOWN)
-                        server.buttonShake = packed.isBtnPressed(BluetoothControllerManager.BTN_SHAKE)
-
-                        server.stickX = packed.stickX.toInt()
-                        server.stickY = packed.stickY.toInt()
+                        server.setSlotState(
+                            slotId,
+                            accelX = packed.accelX,
+                            accelY = packed.accelY,
+                            accelZ = packed.accelZ,
+                            gyroX = packed.gyroX,
+                            gyroY = packed.gyroY,
+                            gyroZ = packed.gyroZ,
+                            btnA = packed.isBtnPressed(BluetoothControllerManager.BTN_A),
+                            btnB = packed.isBtnPressed(BluetoothControllerManager.BTN_B),
+                            btnMinus = packed.isBtnPressed(BluetoothControllerManager.BTN_MINUS),
+                            btnPlus = packed.isBtnPressed(BluetoothControllerManager.BTN_PLUS),
+                            btnHome = packed.isBtnPressed(BluetoothControllerManager.BTN_HOME),
+                            btn1 = packed.isBtnPressed(BluetoothControllerManager.BTN_1),
+                            btn2 = packed.isBtnPressed(BluetoothControllerManager.BTN_2),
+                            btnLeft = packed.isBtnPressed(BluetoothControllerManager.BTN_LEFT),
+                            btnRight = packed.isBtnPressed(BluetoothControllerManager.BTN_RIGHT),
+                            btnUp = packed.isBtnPressed(BluetoothControllerManager.BTN_UP),
+                            btnDown = packed.isBtnPressed(BluetoothControllerManager.BTN_DOWN),
+                            btnShake = packed.isBtnPressed(BluetoothControllerManager.BTN_SHAKE),
+                            stickX = packed.stickX.toInt(),
+                            stickY = packed.stickY.toInt(),
+                            isConnected = true
+                        )
                     }
                 }
             }
@@ -320,17 +386,25 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
                 val y = event.values[1]
                 val z = event.values[2]
 
-                _gyroState.value = Triple(x, y, z)
+                // Save raw value for calibration purposes
+                lastRawGyro = Triple(x, y, z)
+
+                // Apply MotionPlus calibration bias and multiplier sensitivity
+                val adjX = (x - gyroBiasX) * motionPlusSensitivity.value
+                val adjY = (y - gyroBiasY) * motionPlusSensitivity.value
+                val adjZ = (z - gyroBiasZ) * motionPlusSensitivity.value
+
+                _gyroState.value = Triple(adjX, adjY, adjZ)
 
                 if (btManager.role.value == BluetoothRole.SENDER && btManager.connectionState.value == BtConnectionState.CONNECTED) {
-                    btManager.senderGyroX = x
-                    btManager.senderGyroY = y
-                    btManager.senderGyroZ = z
+                    btManager.senderGyroX = adjX
+                    btManager.senderGyroY = adjY
+                    btManager.senderGyroZ = adjZ
                 } else {
                     dsuServer?.let { server ->
-                        server.gyroX = x
-                        server.gyroY = y
-                        server.gyroZ = z
+                        server.gyroX = adjX
+                        server.gyroY = adjY
+                        server.gyroZ = adjZ
                     }
                 }
             }

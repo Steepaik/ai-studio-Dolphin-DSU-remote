@@ -1285,6 +1285,215 @@ fun BluetoothSyncTab(viewModel: WiiControllerViewModel, themeColor: Color) {
                 }
             }
 
+            // --- 1. Wii MotionPlus Precision Engine Card ---
+            item {
+                val calibActive by viewModel.motionPlusCalibrating.collectAsStateWithLifecycle()
+                val calibDone by viewModel.motionPlusCalibrated.collectAsStateWithLifecycle()
+                val sens by viewModel.motionPlusSensitivity.collectAsStateWithLifecycle()
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = LightSlate),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, tint = themeColor, modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Wii MotionPlus Precision Engine", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            "Simulates high-end gyroscope & acceleration sensors for standard Wii Remote with MotionPlus extensions.",
+                            fontSize = 11.sp, color = Color.LightGray
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Calibration status indicator
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.Black.copy(alpha = 0.3f))
+                                .padding(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (calibActive) Color.Yellow
+                                        else if (calibDone) Color.Green
+                                        else Color.Red
+                                    )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (calibActive) "Calibrating standing drift... Place flat!"
+                                       else if (calibDone) "MotionPlus Gyro: Active & Balanced"
+                                       else "MotionPlus Gyro: Uncalibrated (Standing Drift)",
+                                fontSize = 11.sp,
+                                color = Color.White,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(
+                                onClick = { viewModel.calibrateMotionPlus() },
+                                colors = ButtonDefaults.buttonColors(containerColor = if (calibActive) Color.DarkGray else themeColor),
+                                enabled = !calibActive,
+                                modifier = Modifier.weight(1.3f).height(40.dp)
+                            ) {
+                                Text(if (calibActive) "Calibrating..." else "Calibrate", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+
+                            // Sensitivity controls
+                            Row(
+                                modifier = Modifier
+                                    .weight(2f)
+                                    .height(40.dp)
+                                    .border(1.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(20.dp))
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(Color.Black.copy(alpha = 0.15f)),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                listOf(0.5f, 1.0f, 2.0f).forEach { sRate ->
+                                    val isSelected = sens == sRate
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxHeight()
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(if (isSelected) themeColor else Color.Transparent)
+                                            .clickable { viewModel.motionPlusSensitivity.value = sRate }
+                                            .padding(horizontal = 4.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = when(sRate) {
+                                                0.5f -> "Slow"
+                                                1.0f -> "Mid"
+                                                else -> "Fast"
+                                            },
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) Color.White else Color.LightGray
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- 2. Dolphin Android Emulator Launcher Card ---
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = LightSlate),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Send, contentDescription = null, tint = themeColor, modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Dolphin Integration Launcher", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            "Directly launch the Dolphin Emulator app installed on this Android device to quickly configure or play games.",
+                            fontSize = 11.sp, color = Color.LightGray
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Button(
+                            onClick = {
+                                val ok = viewModel.launchDolphinApp(context)
+                                if (!ok) {
+                                    android.widget.Toast.makeText(context, "Dolphin Emulator app not found on this device.", android.widget.Toast.LENGTH_LONG).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = themeColor),
+                            modifier = Modifier.fillMaxWidth().height(42.dp)
+                        ) {
+                            Text("LAUNCH DOLPHIN EMULATOR", letterSpacing = 0.5.sp, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                        }
+                    }
+                }
+            }
+
+            // --- 3. Active Multi-player Slots visualizer ---
+            item {
+                val slotList by viewModel.btManager.connectedClientsList.collectAsStateWithLifecycle()
+                
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = LightSlate),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.AccountBox, contentDescription = null, tint = themeColor, modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Active Wii Mote Slots (Multiplayer)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            "Connect multiple sender devices. The receiver bridge automatically assigns them to active emulator player slots.",
+                            fontSize = 11.sp, color = Color.LightGray
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            for (slotIdx in 0..3) {
+                                val assignedName = slotList.find { it.startsWith("Slot ${slotIdx + 1}:") }
+                                val isOccupied = assignedName != null || (slotIdx == 0 && btRole != BluetoothRole.RECEIVER)
+                                val pColor = if (isOccupied) themeColor else Color.DarkGray
+                                
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.Black.copy(alpha = 0.3f))
+                                        .border(1.dp, pColor.copy(alpha = if (isOccupied) 1.0f else 0.5f), RoundedCornerShape(8.dp))
+                                        .padding(vertical = 8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isOccupied) Color.Green else Color.Gray)
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Player P${slotIdx + 1}",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isOccupied) Color.White else Color.Gray
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = if (isOccupied) {
+                                            if (slotIdx == 0 && btRole != BluetoothRole.RECEIVER) "Local Host"
+                                            else assignedName?.substringAfter(":")?.trim()?.take(7) ?: "Active"
+                                        } else "Offline",
+                                        fontSize = 8.sp,
+                                        color = if (isOccupied) themeColor else Color.DarkGray,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (btState != BtConnectionState.NONE) {
                 item {
                     Card(
