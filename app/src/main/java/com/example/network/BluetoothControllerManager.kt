@@ -6,7 +6,11 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.bluetooth.BluetoothHidDevice
+import android.bluetooth.BluetoothHidDeviceAppSdpSettings
+import android.bluetooth.BluetoothProfile
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,9 +21,10 @@ import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 
 enum class BluetoothRole {
-    IDLE, SENDER, RECEIVER
+    IDLE, SENDER, RECEIVER, HID_GAMEPAD
 }
 
 enum class BtConnectionState {
@@ -59,8 +64,109 @@ class BluetoothControllerManager(private val context: Context) {
     private val APP_UUID = UUID.fromString("1f8bd4b2-0382-4aa8-a53b-fde5bc63ee28")
     private val APP_NAME = "WiiControllerBluetooth"
 
+    private var hidDevice: BluetoothProfile? = null
+    var activeHidHost: BluetoothDevice? = null
+        private set
+    var isHidRegistered = false
+        private set
+    private val hidExecutor = Executors.newSingleThreadExecutor()
+
+    private val HID_DESCRIPTOR = byteArrayOf(
+        0x05.toByte(), 0x01.toByte(), // USAGE_PAGE (Generic Desktop)
+        0x09.toByte(), 0x05.toByte(), // USAGE (Gamepad)
+        0xa1.toByte(), 0x01.toByte(), // COLLECTION (Application)
+        
+        // Buttons (16 buttons)
+        0x85.toByte(), 0x01.toByte(), //   REPORT_ID (1)
+        0x05.toByte(), 0x09.toByte(), //   USAGE_PAGE (Button)
+        0x19.toByte(), 0x01.toByte(), //   USAGE_MINIMUM (Button 1)
+        0x29.toByte(), 0x10.toByte(), //   USAGE_MAXIMUM (Button 16)
+        0x15.toByte(), 0x00.toByte(), //   LOGICAL_MINIMUM (0)
+        0x25.toByte(), 0x01.toByte(), //   LOGICAL_MAXIMUM (1)
+        0x75.toByte(), 0x01.toByte(), //   REPORT_SIZE (1)
+        0x95.toByte(), 0x10.toByte(), //   REPORT_COUNT (16)
+        0x81.toByte(), 0x02.toByte(), //   INPUT (Data,Var,Abs)
+        
+        // Joysticks / Axial controls (X, Y, Z, Rz)
+        0x05.toByte(), 0x01.toByte(), //   USAGE_PAGE (Generic Desktop)
+        0x09.toByte(), 0x30.toByte(), //   USAGE (X)
+        0x09.toByte(), 0x31.toByte(), //   USAGE (Y)
+        0x09.toByte(), 0x32.toByte(), //   USAGE (Z)
+        0x09.toByte(), 0x35.toByte(), //   USAGE (Rz)
+        0x15.toByte(), 0x81.toByte(), //   LOGICAL_MINIMUM (-127)
+        0x25.toByte(), 0x7f.toByte(), //   LOGICAL_MAXIMUM (127)
+        0x75.toByte(), 0x08.toByte(), //   REPORT_SIZE (8)
+        0x95.toByte(), 0x04.toByte(), //   REPORT_COUNT (4)
+        0x81.toByte(), 0x02.toByte(), //   INPUT (Data,Var,Abs)
+        
+        0xc0.toByte()                 // END_COLLECTION
+    )
+
+    private val hidCallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        object : BluetoothHidDevice.Callback() {
+            override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
+                Log.d("BtControllerManager", "onAppStatusChanged: registered=$registered, device=${pluggedDevice?.name}")
+                isHidRegistered = registered
+            }
+
+            override fun onConnectionStateChanged(device: BluetoothDevice?, state: Int) {
+                Log.d("BtControllerManager", "onConnectionStateChanged: device=${device?.name}, state=$state")
+                if (state == BluetoothProfile.STATE_CONNECTED) {
+                    activeHidHost = device
+                    _connectionState.value = BtConnectionState.CONNECTED
+                    _connectedDeviceName.value = device?.name ?: "HID Host"
+                } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
+                    if (activeHidHost?.address == device?.address) {
+                        activeHidHost = null
+                        if (_role.value == BluetoothRole.HID_GAMEPAD) {
+                            _connectionState.value = BtConnectionState.LISTENING
+                        } else {
+                            _connectionState.value = BtConnectionState.NONE
+                        }
+                        _connectedDeviceName.value = null
+                    }
+                }
+            }
+
+            override fun onGetReport(device: BluetoothDevice?, type: Byte, id: Byte, bufferSize: Int) {}
+            override fun onSetReport(device: BluetoothDevice?, type: Byte, id: Byte, data: ByteArray?) {}
+            override fun onSetProtocol(device: BluetoothDevice?, protocol: Byte) {}
+            override fun onInterruptData(device: BluetoothDevice?, reportId: Byte, data: ByteArray?) {}
+        }
+    } else {
+        null
+    }
+
+    private val profileListener = object : BluetoothProfile.ServiceListener {
+        override fun onServiceConnected(profile: Int, proxy: BluetoothProfile?) {
+            if (profile == BluetoothProfile.HID_DEVICE) {
+                hidDevice = proxy
+                Log.d("BtControllerManager", "Bluetooth HID Device Proxy connected successfully")
+                if (_role.value == BluetoothRole.HID_GAMEPAD) {
+                    registerHidApp()
+                }
+            }
+        }
+
+        override fun onServiceDisconnected(profile: Int) {
+            if (profile == BluetoothProfile.HID_DEVICE) {
+                hidDevice = null
+            }
+        }
+    }
+
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
     val bluetoothAdapter: BluetoothAdapter? = bluetoothManager?.adapter
+
+    init {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                bluetoothAdapter?.getProfileProxy(context, profileListener, BluetoothProfile.HID_DEVICE)
+            }
+        } catch (e: Exception) {
+            Log.e("BtControllerManager", "Failed to get Bluetooth HID_DEVICE profile proxy: ${e.message}")
+        }
+    }
 
     private val _connectionState = MutableStateFlow(BtConnectionState.NONE)
     val connectionState = _connectionState.asStateFlow()
@@ -222,6 +328,106 @@ class BluetoothControllerManager(private val context: Context) {
         _role.value = BluetoothRole.SENDER
         _connectionState.value = BtConnectionState.NONE
         refreshPairedDevices()
+    }
+
+    @SuppressLint("MissingPermission")
+    fun startHidGamepadMode() {
+        stopAll()
+        _role.value = BluetoothRole.HID_GAMEPAD
+        _connectionState.value = BtConnectionState.LISTENING
+        refreshPairedDevices()
+        registerHidApp()
+    }
+
+    @SuppressLint("MissingPermission")
+    fun registerHidApp() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        val device = hidDevice as? BluetoothHidDevice ?: return
+        if (isHidRegistered) return
+
+        try {
+            val sdpSettings = BluetoothHidDeviceAppSdpSettings(
+                "WiiMote Emulated Gamepad",
+                "Emulating standard game controller input with motion tilt",
+                "Nintendo Emulators Inc",
+                0x24.toByte(), // Subclass: Gamepad Profile Device subclass identifier
+                HID_DESCRIPTOR
+            )
+
+            val registered = device.registerApp(
+                sdpSettings,
+                null,
+                null,
+                hidExecutor,
+                hidCallback as? BluetoothHidDevice.Callback
+            )
+            Log.d("BtControllerManager", "registerApp called, success status = $registered")
+            isHidRegistered = registered
+        } catch (e: Exception) {
+            Log.e("BtControllerManager", "Failed to register HID application: ${e.message}")
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun unregisterHidApp() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        val device = hidDevice as? BluetoothHidDevice ?: return
+        if (!isHidRegistered) return
+
+        try {
+            device.unregisterApp()
+            isHidRegistered = false
+            Log.d("BtControllerManager", "unregisterApp called")
+        } catch (e: Exception) {
+            Log.e("BtControllerManager", "Failed to unregister HID application: ${e.message}")
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun sendHidReport() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        val device = hidDevice as? BluetoothHidDevice ?: return
+        val host = activeHidHost ?: return
+
+        try {
+            val reportData = ByteArray(6) // 16 buttons (2 bytes) + 4 axes (4 bytes)
+            
+            // Buttons Byte 0-1
+            var btns = 0
+            if ((senderButtons and BTN_A) != 0) btns = btns or (1 shl 0)
+            if ((senderButtons and BTN_B) != 0) btns = btns or (1 shl 1)
+            if ((senderButtons and BTN_1) != 0) btns = btns or (1 shl 2)
+            if ((senderButtons and BTN_2) != 0) btns = btns or (1 shl 3)
+            if ((senderButtons and BTN_PLUS) != 0) btns = btns or (1 shl 4)
+            if ((senderButtons and BTN_MINUS) != 0) btns = btns or (1 shl 5)
+            if ((senderButtons and BTN_HOME) != 0) btns = btns or (1 shl 6)
+            if ((senderButtons and BTN_SHAKE) != 0) btns = btns or (1 shl 7)
+            
+            if ((senderButtons and BTN_LEFT) != 0) btns = btns or (1 shl 8)
+            if ((senderButtons and BTN_RIGHT) != 0) btns = btns or (1 shl 9)
+            if ((senderButtons and BTN_UP) != 0) btns = btns or (1 shl 10)
+            if ((senderButtons and BTN_DOWN) != 0) btns = btns or (1 shl 11)
+            
+            reportData[0] = (btns and 0xFF).toByte()
+            reportData[1] = ((btns shr 8) and 0xFF).toByte()
+            
+            // Axes: X, Y (Nunchuk analog)
+            reportData[2] = senderStickX
+            reportData[3] = senderStickY
+            
+            // Axes: Z, Rz (Tilt equivalent mapped dynamically to physical tilt)
+            val mappedZ = (senderAccelX * 12.0f).toInt().coerceIn(-127, 127).toByte()
+            val mappedRz = (senderAccelY * 12.0f).toInt().coerceIn(-127, 127).toByte()
+            
+            reportData[4] = mappedZ
+            reportData[5] = mappedRz
+            
+            device.sendReport(host, 1, reportData)
+            
+            _bytesTransmitted.value = _bytesTransmitted.value + reportData.size
+        } catch (e: Exception) {
+            Log.e("BtControllerManager", "Error transmitting HID report packet: ${e.message}")
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -427,12 +633,20 @@ class BluetoothControllerManager(private val context: Context) {
         } else {
             senderButtons and mask.inv()
         }
+        if (_role.value == BluetoothRole.HID_GAMEPAD) {
+            sendHidReport()
+        }
     }
 
     private fun activeRole(): BluetoothRole = _role.value
 
     fun stopAll() {
         Log.i(TAG, "Cleaning up all Bluetooth connections and servers...")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            unregisterHidApp()
+        }
+        activeHidHost = null
+
         sendJob?.cancel()
         sendJob = null
         receiveJob?.cancel()

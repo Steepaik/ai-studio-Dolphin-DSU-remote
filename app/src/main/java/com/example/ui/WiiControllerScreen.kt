@@ -56,6 +56,7 @@ val ElectricBlue = Color(0xFF00D2FF)
 val ActiveGreen = Color(0xFF00FF88)
 val SoftGrey = Color(0xFFB0C4DE)
 val ErrorCrimson = Color(0xFFFF4D4D)
+val MagentaAccent = Color(0xFFFF007F)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -213,11 +214,13 @@ fun ControllerTab(viewModel: WiiControllerViewModel) {
                                 text = when (btRole) {
                                     BluetoothRole.RECEIVER -> "CONSOLE HOST"
                                     BluetoothRole.SENDER -> "WII REMOTE"
+                                    BluetoothRole.HID_GAMEPAD -> "HID GAMEPAD"
                                     else -> "STANDALONE"
                                 },
                                 color = when (btRole) {
                                     BluetoothRole.RECEIVER -> ActiveGreen
                                     BluetoothRole.SENDER -> ElectricBlue
+                                    BluetoothRole.HID_GAMEPAD -> MagentaAccent
                                     else -> SoftGrey
                                 },
                                 fontSize = 10.sp,
@@ -246,9 +249,9 @@ fun ControllerTab(viewModel: WiiControllerViewModel) {
                             modifier = Modifier.weight(1f),
                             contentPadding = PaddingValues(vertical = 10.dp)
                         ) {
-                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Console Host", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Console Host", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
 
                         Button(
@@ -263,9 +266,26 @@ fun ControllerTab(viewModel: WiiControllerViewModel) {
                             modifier = Modifier.weight(1f),
                             contentPadding = PaddingValues(vertical = 10.dp)
                         ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("WiiMote Client", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("WiiMote Client", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = { 
+                                viewModel.btManager.startHidGamepadMode() 
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (btRole == BluetoothRole.HID_GAMEPAD) CardDark else Color.Transparent,
+                                contentColor = if (btRole == BluetoothRole.HID_GAMEPAD) MagentaAccent else SoftGrey
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1.1f),
+                            contentPadding = PaddingValues(vertical = 10.dp)
+                        ) {
+                            Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("HID Gamepad", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -447,6 +467,75 @@ fun ControllerTab(viewModel: WiiControllerViewModel) {
                                                 }
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+
+                        BluetoothRole.HID_GAMEPAD -> {
+                            // emulated Bluetooth HID Gamepad Details Panel
+                            val isRegistered = viewModel.btManager.isHidRegistered
+                            val connectedDeviceName = viewModel.btManager.connectedDeviceName.collectAsStateWithLifecycle().value
+                            
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(MagentaAccent.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                                        .padding(8.dp)
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = "Emulated Bluetooth HID Controller Mode",
+                                            fontSize = 11.sp,
+                                            color = MagentaAccent,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "Transforms your phone into a real Bluetooth gamepad. Connects cleanly to any PC/Mac/Phone/Tablet/TV without any recipient client apps!",
+                                            fontSize = 10.sp,
+                                            color = SoftGrey
+                                        )
+                                    }
+                                }
+
+                                if (btState == BtConnectionState.CONNECTED && connectedDeviceName != null) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(ConsoleDark, RoundedCornerShape(8.dp))
+                                            .padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text("Active Bluetooth HID Link", fontSize = 10.sp, color = SoftGrey)
+                                            Text("Connected to: $connectedDeviceName", fontSize = 12.sp, color = MagentaAccent, fontWeight = FontWeight.Bold)
+                                        }
+                                        Button(
+                                            onClick = { viewModel.btManager.stopAll() },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
+                                            shape = RoundedCornerShape(6.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("DISCONNECT", fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                } else {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("How to pair & connect:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        Text("1. Open Bluetooth Settings on your target device (PC, iPad, TV, etc.)", fontSize = 10.sp, color = SoftGrey)
+                                        Text("2. Search for and pair with this Android device", fontSize = 10.sp, color = SoftGrey)
+                                        Text("3. Once pairing is established, it will connect as a standard emulated controller!", fontSize = 10.sp, color = SoftGrey)
+                                        
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("Physical Motion Dynamics mapping:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        Text("• Shake detection acts as a dedicated controller button", fontSize = 10.sp, color = SoftGrey)
+                                        Text("• Accelerometer / Tilting controls secondary raw joysticks", fontSize = 10.sp, color = SoftGrey)
+                                        Text("• Nunchuk Joystick controls the left stick axes cleanly", fontSize = 10.sp, color = SoftGrey)
                                     }
                                 }
                             }

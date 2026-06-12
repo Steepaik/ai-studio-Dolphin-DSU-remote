@@ -447,13 +447,18 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
                 }
 
                 val bSync = boundService?.btManager
-                if (bSync?.role?.value == BluetoothRole.SENDER && bSync.connectionState.value == BtConnectionState.CONNECTED) {
-                    bSync.senderAccelX = filteredX
-                    bSync.senderAccelY = filteredY
-                    bSync.senderAccelZ = filteredZ
+                val isSender = bSync?.role?.value == BluetoothRole.SENDER && bSync.connectionState.value == BtConnectionState.CONNECTED
+                val isHid = bSync?.role?.value == BluetoothRole.HID_GAMEPAD
+
+                if (isSender || isHid) {
+                    bSync?.senderAccelX = filteredX
+                    bSync?.senderAccelY = filteredY
+                    bSync?.senderAccelZ = filteredZ
                     if (isShake) {
-                        bSync.updateSenderButton(BluetoothControllerManager.BTN_SHAKE, true)
+                        bSync?.updateSenderButton(BluetoothControllerManager.BTN_SHAKE, true)
                         triggerSenderShakeReset()
+                    } else if (isHid) {
+                        bSync?.sendHidReport()
                     }
                 } else {
                     boundService?.dsuServer?.let { server ->
@@ -486,10 +491,16 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
                 _gyroState.value = Triple(adjX, adjY, adjZ)
 
                 val bSync = boundService?.btManager
-                if (bSync?.role?.value == BluetoothRole.SENDER && bSync.connectionState.value == BtConnectionState.CONNECTED) {
-                    bSync.senderGyroX = adjX
-                    bSync.senderGyroY = adjY
-                    bSync.senderGyroZ = adjZ
+                val isSender = bSync?.role?.value == BluetoothRole.SENDER && bSync.connectionState.value == BtConnectionState.CONNECTED
+                val isHid = bSync?.role?.value == BluetoothRole.HID_GAMEPAD
+
+                if (isSender || isHid) {
+                    bSync?.senderGyroX = adjX
+                    bSync?.senderGyroY = adjY
+                    bSync?.senderGyroZ = adjZ
+                    if (isHid) {
+                        bSync?.sendHidReport()
+                    }
                 } else {
                     boundService?.dsuServer?.let { server ->
                         server.gyroX = adjX
@@ -574,7 +585,10 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
         }
 
         val bSync = boundService?.btManager
-        if (bSync?.role?.value == BluetoothRole.SENDER && bSync.connectionState.value == BtConnectionState.CONNECTED) {
+        val isSender = bSync?.role?.value == BluetoothRole.SENDER && bSync.connectionState.value == BtConnectionState.CONNECTED
+        val isHid = bSync?.role?.value == BluetoothRole.HID_GAMEPAD
+
+        if (isSender || isHid) {
             val mask = when (destination) {
                 "A" -> BluetoothControllerManager.BTN_A
                 "B" -> BluetoothControllerManager.BTN_B
@@ -591,7 +605,7 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
                 else -> 0
             }
             if (mask != 0) {
-                bSync.updateSenderButton(mask, isPressed)
+                bSync?.updateSenderButton(mask, isPressed)
             }
             return
         }
@@ -625,9 +639,15 @@ class WiiControllerViewModel(application: Application) : AndroidViewModel(applic
         val finalByteY = (processedY * 127f).toInt().coerceIn(-128, 127).toByte()
 
         val bSync = boundService?.btManager
-        if (bSync?.role?.value == BluetoothRole.SENDER && bSync.connectionState.value == BtConnectionState.CONNECTED) {
-            bSync.senderStickX = finalByteX
-            bSync.senderStickY = finalByteY
+        val isSender = bSync?.role?.value == BluetoothRole.SENDER && bSync.connectionState.value == BtConnectionState.CONNECTED
+        val isHid = bSync?.role?.value == BluetoothRole.HID_GAMEPAD
+
+        if (isSender || isHid) {
+            bSync?.senderStickX = finalByteX
+            bSync?.senderStickY = finalByteY
+            if (isHid) {
+                bSync?.sendHidReport()
+            }
             return
         }
 
