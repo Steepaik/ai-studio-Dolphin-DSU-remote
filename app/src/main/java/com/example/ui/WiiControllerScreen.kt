@@ -917,25 +917,6 @@ fun WiiMoteMockupLayout(viewModel: WiiControllerViewModel) {
                     Text("Sound 2", fontSize = 10.sp, maxLines = 1)
                 }
             }
-
-            // Physical Shake motion simulator button
-            Button(
-                onClick = {},
-                colors = ButtonDefaults.buttonColors(containerColor = ErrorCrimson),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragEnd = { viewModel.onButtonPressed("SHAKE", false) }
-                        ) { change, _ ->
-                            change.consume()
-                            viewModel.onButtonPressed("SHAKE", true)
-                        }
-                    }
-                    .testTag("shake_simulation_button")
-            ) {
-                Text("SIMULATE SHAKE", fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
-            }
         }
     }
 }

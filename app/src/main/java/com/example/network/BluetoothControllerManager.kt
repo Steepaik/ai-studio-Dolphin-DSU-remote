@@ -158,16 +158,6 @@ class BluetoothControllerManager(private val context: Context) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
     val bluetoothAdapter: BluetoothAdapter? = bluetoothManager?.adapter
 
-    init {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                bluetoothAdapter?.getProfileProxy(context, profileListener, BluetoothProfile.HID_DEVICE)
-            }
-        } catch (e: Exception) {
-            Log.e("BtControllerManager", "Failed to get Bluetooth HID_DEVICE profile proxy: ${e.message}")
-        }
-    }
-
     private val _connectionState = MutableStateFlow(BtConnectionState.NONE)
     val connectionState = _connectionState.asStateFlow()
 
@@ -219,6 +209,16 @@ class BluetoothControllerManager(private val context: Context) {
     private var workerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private var activeOutStream: OutputStream? = null
+
+    init {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                bluetoothAdapter?.getProfileProxy(context, profileListener, BluetoothProfile.HID_DEVICE)
+            }
+        } catch (e: Exception) {
+            Log.e("BtControllerManager", "Failed to get Bluetooth HID_DEVICE profile proxy: ${e.message}")
+        }
+    }
 
     // Controller input bitmasks
     companion object {
